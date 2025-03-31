@@ -1,10 +1,11 @@
-const express = require('express');
-const { MongoClient } = require('mongodb');
-const cors = require('cors'); // Добавьте этот модуль
+const express = require("express");
+const { MongoClient } = require("mongodb");
+const cors = require("cors"); // Добавьте этот модуль
 
 const app = express();
 const port = process.env.PORT || 3000;
-const uri = 'mongodb+srv://maksimkryglyk:Prometey888!@asutp-notes.c17wh2w.mongodb.net/';
+const uri =
+  "mongodb+srv://maksimkryglyk:Prometey888!@asutp-notes.c17wh2w.mongodb.net/";
 
 app.use(cors()); // Добавьте этот middleware
 app.use(express.json());
@@ -13,16 +14,21 @@ async function connectToDatabase() {
   const client = new MongoClient(uri);
   try {
     await client.connect();
-    const database = client.db('asutp-notes');
-    const collection = database.collection('notes');
+    if (client.isConnected()) {
+      console.log("MongoDB Atlas connection is active");
+    } else {
+      console.log("MongoDB Atlas connection is not active");
+    }
+    const database = client.db("asutp-notes");
+    const collection = database.collection("notes");
     return { client, database, collection };
   } catch (error) {
-    console.error('Error connecting to database:', error);
+    console.error("Error connecting to database:", error);
     throw error;
   }
 }
 
-app.get('/notes', async (req, res) => {
+app.get("/notes", async (req, res) => {
   try {
     const { client, collection } = await connectToDatabase();
     const notes = await collection.find().toArray();
@@ -32,7 +38,7 @@ app.get('/notes', async (req, res) => {
   }
 });
 
-app.post('/notes', async (req, res) => {
+app.post("/notes", async (req, res) => {
   try {
     const { client, collection } = await connectToDatabase();
     const result = await collection.insertOne(req.body);
