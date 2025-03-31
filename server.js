@@ -17,7 +17,7 @@ async function connectToDatabase() {
     const collection = database.collection('notes');
     return { client, database, collection };
   } catch (error) {
-    console.error('Error connecting to database:', error);
+    console.error('Error connecting to database: ', error);
     throw error;
   }
 }
