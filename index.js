@@ -38,6 +38,7 @@ app.use('/uploads', express.static('uploads'));
 
 app.post('/auth/login', loginValidation, handleValidationErrors, UserController.login);
 app.post('/auth/register', registerValidation, handleValidationErrors, UserController.register);
+
 app.get('/auth/me', checkAuth, UserController.getMe);
 
 app.post('/upload', checkAuth, upload.single('image'), (req, res) => {
@@ -61,7 +62,7 @@ app.patch(
   PostController.update,
 );
 
-app.listen(process.env.PORT || 4444, (err) => {
+app.listen(process.env.PORT || 4000, (err) => {
   if (err) {
     return console.log(err);
   }
