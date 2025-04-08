@@ -2,17 +2,20 @@ import express from 'express';
 import fs from 'fs';
 import multer from 'multer';
 import cors from 'cors';
-
 import mongoose from 'mongoose';
-
 import { registerValidation, loginValidation, postCreateValidation } from './validations.js';
-
 import { handleValidationErrors, checkAuth } from './utils/index.js';
-
 import { UserController, PostController } from './controllers/index.js';
 
+const mongoUri = process.env.MONGODB_URI;
+if (!mongoUri) {
+  console.error('Ошибка: Переменная окружения MONGODB_URI не определена.');
+  process.exit(1); // Завершить процесс с ошибкой
+  // Или выбросить ошибку: throw new Error('MONGODB_URI is not defined');
+}
+
 mongoose
-.connect("mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp")
+.connect(mongoUri)
   .then(() => console.log('DB ok'))
   .catch((err) => console.log('DB error', err));
 
