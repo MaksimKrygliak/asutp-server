@@ -21,6 +21,7 @@ export const register = async (req, res) => {
     const token = jwt.sign(
       {
         _id: user._id,
+        role: user.role,
       },
       'secret123',
       {
@@ -56,13 +57,14 @@ export const login = async (req, res) => {
 
     if (!isValidPass) {
       return res.status(400).json({
-        message: 'Неверный логин или пароль',
+        message: 'Неверный пароль',
       });
     }
 
     const token = jwt.sign(
       {
         _id: user._id,
+        role: user.role,
       },
       'secret123',
       {

@@ -16,6 +16,11 @@ const UserSchema = new mongoose.Schema(
       required: true,
     },
     avatarUrl: String,
+    role: {
+      type: String,
+      enum: ['звичайний', 'адміністратор'],
+      default: 'звичайний', 
+    },
   },
   {
     timestamps: true,
