@@ -20,10 +20,20 @@ export const getLastTags = async (req, res) => {
 
 export const getAll = async (req, res) => {
   try {
-    const posts = await PostModel.find().populate("user").exec();
-    res.json(posts);
+    const tag = req.query.tag;
+    let query = {};
+    if (tag) {
+      query.tags = tag;
+    }
+
+    const [notes, count] = await Promise.all([
+      PostModel.find(query).populate("user").exec(),
+      PostModel.countDocuments(query),
+    ]);
+
+    res.json({ notes, count });
   } catch (err) {
-    console.log(err);
+    console.error(err);
     res.status(500).json({
       message: "Не удалось получить статьи",
     });
@@ -72,35 +82,41 @@ export const getOne = async (req, res) => {
 export const remove = async (req, res) => {
   try {
     const postId = req.params.id;
+    const userId = req.userId; // ID текущего пользователя из middleware checkAuth
+    const userRole = req.userRole; // Роль текущего пользователя
 
-    PostModel.findOneAndDelete(
-      {
-        _id: postId,
-      },
-      (err, doc) => {
-        if (err) {
-          console.log(err);
-          return res.status(500).json({
-            message: "Не удалось удалить статью",
-          });
+    const post = await PostModel.findById(postId).populate('user');
+
+    if (!post) {
+      return res.status(404).json({ message: 'Стаття не знайдена' });
+    }
+
+    console.log('UserID текущего пользователя:', userId);
+    console.log('ID автора поста:', post.user._id.toString());
+    console.log('Роль текущего пользователя:', userRole);
+
+    // Разрешаем удаление, если пользователь - администратор ИЛИ автор поста
+    if (userRole === 'адміністратор' || post.user._id.toString() === userId) {
+      PostModel.findOneAndDelete(
+        { _id: postId },
+        (err, doc) => {
+          if (err) {
+            console.error(err);
+            return res.status(500).json({ message: 'Не вдалося видалити статтю' });
+          }
+          if (!doc) {
+            return res.status(404).json({ message: 'Стаття не знайдена' });
+          }
+          res.json({ success: true });
         }
+      );
+    } else {
+      return res.status(403).json({ message: 'Ви не маєте прав для видалення цієї статті' });
+    }
 
-        if (!doc) {
-          return res.status(404).json({
-            message: "Статья не найдена",
-          });
-        }
-
-        res.json({
-          success: true,
-        });
-      }
-    );
   } catch (err) {
-    console.log(err);
-    res.status(500).json({
-      message: "Не удалось получить статьи",
-    });
+    console.error(err);
+    res.status(500).json({ message: 'Не вдалося отримати статті' });
   }
 };
 
@@ -128,27 +144,39 @@ export const create = async (req, res) => {
 export const update = async (req, res) => {
   try {
     const postId = req.params.id;
+    const userId = req.userId; // ID текущего пользователя
+    const userRole = req.userRole; // Роль текущего пользователя
 
-    await PostModel.updateOne(
-      {
-        _id: postId,
-      },
-      {
-        title: req.body.title,
-        text: req.body.text,
-        imageUrl: req.body.imageUrl,
-        user: req.userId,
-        tags: req.body.tags.split(','),
-      },
-    );
+    const post = await PostModel.findById(postId).populate('user');
 
-    res.json({
-      success: true,
-    });
+    if (!post) {
+      return res.status(404).json({ message: 'Стаття не знайдена' });
+    }
+
+    console.log('UserID текущего пользователя:', userId);
+    console.log('ID автора поста:', post.user._id.toString());
+    console.log('Роль текущего пользователя:', userRole);
+
+    // Разрешаем обновление, если пользователь - администратор ИЛИ автор поста
+    if (userRole === 'адміністратор' || post.user._id.toString() === userId) {
+      await PostModel.updateOne(
+        { _id: postId },
+        {
+          title: req.body.title,
+          text: req.body.text,
+          imageUrl: req.body.imageUrl,
+          user: req.userId, // Возможно, не стоит разрешать менять автора
+          tags: req.body.tags ? req.body.tags.split(',') : [],
+        }
+      );
+
+      res.json({ success: true });
+    } else {
+      return res.status(403).json({ message: 'Ви не маєте прав для редагування цієї статті' });
+    }
+
   } catch (err) {
-    console.log(err);
-    res.status(500).json({
-      message: 'Не удалось обновить статью',
-    });
+    console.error(err);
+    res.status(500).json({ message: 'Не вдалося обновить статтю' });
   }
 };

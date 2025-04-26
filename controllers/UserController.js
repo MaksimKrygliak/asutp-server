@@ -146,3 +146,58 @@ export const getMe = async (req, res) => {
     res.status(500).json({ message: "Нет доступа." });
   }
 };
+
+export const getAllUsers = async (req, res) => {
+  try {
+    const users = await UserModel.find().select('-passwordHash').exec(); // Исключаем пароль из ответа
+    const totalCount = await UserModel.countDocuments();
+    res.json({
+      data: users,
+      total: totalCount,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Не удалось получить пользователей",
+    });
+  }
+};
+
+export const getUserById = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const user = await UserModel.findById(userId).select('-passwordHash').exec();
+    if (!user) {
+      return res.status(404).json({ message: 'Користувача не знайдено' });
+    }
+    res.json(user);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Не вдалося отримати дані користувача' });
+  }
+};
+
+export const updateUser = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { fullName, email, role, password } = req.body;
+    const updateData = { fullName, email, role };
+
+    if (password) {
+      const salt = await bcrypt.genSalt(10);
+      const hash = await bcrypt.hash(password, salt);
+      updateData.passwordHash = hash;
+    }
+
+    const updatedUser = await UserModel.findByIdAndUpdate(userId, updateData, { new: true }).select('-passwordHash').exec();
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'Користувача не знайдено' });
+    }
+
+    res.json(updatedUser);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Не вдалося оновити дані користувача' });
+  }
+};

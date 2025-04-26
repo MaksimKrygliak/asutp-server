@@ -9,7 +9,7 @@ import {
   postCreateValidation,
 } from "./validations.js";
 import { handleValidationErrors, checkAuth } from "./utils/index.js";
-import { UserController, PostController } from "./controllers/index.js";
+import { UserController, PostController, PhoneNumberController } from "./controllers/index.js";
 import { verifyAdminRole } from "./utils/verifyRole.js";
 
 const mongoUri = process.env.MONGODB_URI;
@@ -44,14 +44,20 @@ app.use(express.json());
 app.use(cors());
 app.use("/uploads", express.static("uploads"));
 
-app.post(
-  "/auth/login",
+app.post("/upload", checkAuth, upload.single("image"), (req, res) => {
+  const imageUrl = `http://192.168.222.7:4000/uploads/${req.file.filename}`; // Змініть це
+  res.json({ url: imageUrl });
+  // res.json({
+  //   url: `/uploads/${req.file.originalname}`,
+  // });
+});
+
+app.post("/auth/login",
   loginValidation,
   handleValidationErrors,
   UserController.login
 );
-app.post(
-  "/auth/register",
+app.post("/auth/register",
   registerValidation,
   handleValidationErrors,
   UserController.register
@@ -59,28 +65,29 @@ app.post(
 app.get("/auth/verify/:token", UserController.verifyEmail);
 app.get("/auth/me", checkAuth, UserController.getMe);
 
-app.post("/upload", checkAuth, upload.single("image"), (req, res) => {
-  res.json({
-    url: `/uploads/${req.file.originalname}`,
-  });
-});
+app.get('/users', checkAuth, UserController.getAllUsers);
+app.get("/users/:id", checkAuth, UserController.getUserById);
+app.patch("/users/:id", checkAuth, UserController.updateUser);
+
+app.get("/phoneNumbers", PhoneNumberController.getAll);
+app.get("/phoneNumbers/:id", PhoneNumberController.getOne);
+app.post("/phoneNumbers", checkAuth, PhoneNumberController.create);
+app.delete("/phoneNumbers/:id", checkAuth, PhoneNumberController.remove);
+app.patch("/phoneNumbers/:id", checkAuth, PhoneNumberController.update);
 
 app.get("/tags", PostController.getLastTags);
 app.get("/posts", PostController.getAll);
 app.get("/posts/tags", PostController.getLastTags);
 app.get("/posts/:id", PostController.getOne);
-app.post(
-  "/posts",
+app.post("/posts",
   checkAuth,
   postCreateValidation,
   handleValidationErrors,
   PostController.create
 );
-app.delete("/posts/:id", checkAuth, verifyAdminRole, PostController.remove);
-app.patch(
-  "/posts/:id",
+app.delete("/posts/:id", checkAuth, PostController.remove);
+app.patch("/posts/:id",
   checkAuth,
-  verifyAdminRole,
   postCreateValidation,
   handleValidationErrors,
   PostController.update
