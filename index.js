@@ -12,15 +12,15 @@ import { handleValidationErrors, checkAuth } from "./utils/index.js";
 import { UserController, PostController, PhoneNumberController } from "./controllers/index.js";
 import { verifyAdminRole } from "./utils/verifyRole.js";
 
-// const mongoUri = process.env.MONGODB_URI;
-// if (!mongoUri) {
-//   console.error("Ошибка: Переменная окружения MONGODB_URI не определена.");
-//   process.exit(1);
-// }
+const mongoUri = process.env.MONGODB_URI;
+if (!mongoUri) {
+  console.error("Ошибка: Переменная окружения MONGODB_URI не определена.");
+  process.exit(1);
+}
 
 mongoose
-  .connect('mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp')
-  // .connect(mongoUri)
+  // .connect('mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp')
+  .connect(mongoUri)
   .then(() => console.log("DB ok"))
   .catch((err) => console.log("DB error", err));
 
