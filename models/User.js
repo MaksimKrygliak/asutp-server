@@ -26,6 +26,11 @@ const UserSchema = new mongoose.Schema(
       enum: ["звичайний", "адміністратор"],
       default: "звичайний",
     },
+    viewedPosts: {
+      type: [mongoose.Schema.Types.ObjectId],
+      default: [], // Встановлюємо порожній масив за замовчуванням
+      ref: 'Post', // Посилання на модель Post (якщо потрібно)
+    },
   },
   {
     timestamps: true,

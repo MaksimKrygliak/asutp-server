@@ -7,7 +7,6 @@ export const verifyRegularRole = (req, res, next) => {
   };
   
 export const verifyAdminRole = (req, res, next) => {
-  console.log('good')
     if (req.userRole === 'адміністратор') { // Используем req.userRole
       next();
     } else {
