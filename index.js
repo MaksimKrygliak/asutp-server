@@ -1,6 +1,4 @@
 import express from "express";
-import fs from "fs";
-import multer from "multer";
 import cors from "cors";
 import mongoose from "mongoose";
 import {
@@ -9,8 +7,14 @@ import {
   postCreateValidation,
 } from "./validations.js";
 import { handleValidationErrors, checkAuth } from "./utils/index.js";
-import { UserController, PostController, PhoneNumberController } from "./controllers/index.js";
+import {
+  UserController,
+  PostController,
+  PhoneNumberController,
+} from "./controllers/index.js";
 import { verifyAdminRole } from "./utils/verifyRole.js";
+import { v2 as cloudinary } from "cloudinary";
+import fileUpload from "express-fileupload";
 
 const mongoUri = process.env.MONGODB_URI;
 if (!mongoUri) {
@@ -19,45 +23,82 @@ if (!mongoUri) {
 }
 
 mongoose
-  // .connect('mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp')
+  // .connect(
+  //   "mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp"
+  // )
   .connect(mongoUri)
   .then(() => console.log("DB ok"))
   .catch((err) => console.log("DB error", err));
 
 const app = express();
 
-const storage = multer.diskStorage({
-  destination: (_, __, cb) => {
-    if (!fs.existsSync("uploads")) {
-      fs.mkdirSync("uploads");
-    }
-    cb(null, "uploads");
-  },
-  filename: (_, file, cb) => {
-    cb(null, file.originalname);
-  },
-});
-
-const upload = multer({ storage });
-
 app.use(express.json());
 app.use(cors());
+app.use(
+  fileUpload({
+    useTempFiles: true,
+    tempFileDir: "/tmp/",
+    createParentPath: true,
+  })
+);
 app.use("/uploads", express.static("uploads"));
 
-app.post("/upload", checkAuth, upload.single("image"), (req, res) => {
-  const imageUrl = `http://192.168.222.7:4000/uploads/${req.file.filename}`; // Змініть це
-  res.json({ url: imageUrl });
-  // res.json({
-  //   url: `/uploads/${req.file.originalname}`,
-  // });
+cloudinary.config({
+  cloud_name: "dhjnmoauc",
+  api_key: "218662455584231",
+  api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
+});
+app.post("/upload-avatar", checkAuth, async (req, res) => {
+  try {
+    if (!req.files || !req.files.avatar) {
+      return res.status(400).json({ message: "Будь ласка, завантажте файл." });
+    }
+
+    const avatarFile = req.files.avatar;
+
+    const result = await cloudinary.uploader.upload(avatarFile.tempFilePath, {
+      resource_type: "image",
+      folder: "avatars",
+    });
+
+    const avatarUrl = result.secure_url;
+
+    res.json({ url: avatarUrl });
+  } catch (error) {
+    console.error("Помилка завантаження на Cloudinary:", error);
+    res.status(500).json({ message: "Не вдалося завантажити зображення." });
+  }
 });
 
-app.post("/auth/login",
+app.post("/upload", checkAuth, (req, res) => {
+  if (!req.files || !req.files.image) {
+    return res
+      .status(400)
+      .json({ message: "Будь ласка, завантажте зображення." });
+  }
+
+  const imageFile = req.files.image;
+  const imageUrl = `http://192.168.0.131:4000/uploads/${imageFile.name}`;
+
+  imageFile.mv(`./uploads/${imageFile.name}`, (err) => {
+    if (err) {
+      console.error("Помилка переміщення файлу:", err);
+      return res
+        .status(500)
+        .json({ message: "Не вдалося зберегти зображення." });
+    }
+    res.json({ url: imageUrl });
+  });
+});
+
+app.post(
+  "/auth/login",
   loginValidation,
   handleValidationErrors,
   UserController.login
 );
-app.post("/auth/register",
+app.post(
+  "/auth/register",
   registerValidation,
   handleValidationErrors,
   UserController.register
@@ -65,7 +106,7 @@ app.post("/auth/register",
 app.get("/auth/verify/:token", UserController.verifyEmail);
 app.get("/auth/me", checkAuth, UserController.getMe);
 
-app.get('/users', checkAuth, UserController.getAllUsers);
+app.get("/users", checkAuth, UserController.getAllUsers);
 app.get("/users/:id", checkAuth, UserController.getUserById);
 app.patch("/users/:id", checkAuth, UserController.updateUser);
 
@@ -79,14 +120,16 @@ app.get("/tags", PostController.getLastTags);
 app.get("/posts", PostController.getAll);
 app.get("/posts/tags", PostController.getLastTags);
 app.get("/posts/:id", PostController.getOne);
-app.post("/posts",
+app.post(
+  "/posts",
   checkAuth,
   postCreateValidation,
   handleValidationErrors,
   PostController.create
 );
 app.delete("/posts/:id", checkAuth, PostController.remove);
-app.patch("/posts/:id",
+app.patch(
+  "/posts/:id",
   checkAuth,
   // postCreateValidation,
   handleValidationErrors,

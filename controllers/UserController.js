@@ -2,7 +2,14 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
 import UserModel from "../models/User.js";
-import transporter from "../utils/nodemailerConfig.js"; // Убедитесь, что путь правильный
+import transporter from "../utils/nodemailerConfig.js";
+import { v2 as cloudinary } from "cloudinary";
+
+cloudinary.config({
+  cloud_name: "dhjnmoauc",
+  api_key: "218662455584231",
+  api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
+});
 
 const TOKEN_EXPIRATION_DATA = "7d";
 
@@ -14,7 +21,7 @@ export const register = async (req, res) => {
     if (existingUser) {
       return res
         .status(400)
-        .json({ message: "Пользователь с таким email уже существует." });
+        .json({ message: "Користувач з таким email вже існує." });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -33,7 +40,7 @@ export const register = async (req, res) => {
 
     const verificationLink = `${req.protocol}://${req.get(
       "host"
-    )}/auth/verify/${verificationToken}`; // Используем протокол и хост из запроса
+    )}/auth/verify/${verificationToken}`;
 
     const mailOptions = {
       to: email,
@@ -65,29 +72,23 @@ export const verifyEmail = async (req, res) => {
     const { token } = req.params;
     const user = await UserModel.findOne({ verificationToken: token });
 
-    if (user) {
-      // ... (код верификации пользователя)
-
-      user.isVerified = true;
-      user.verificationToken = undefined;
-      await user.save();
-
-      const jwtToken = jwt.sign(
-        { _id: user._id, role: user.role },
-        "secret123",
-        {
-          expiresIn: TOKEN_EXPIRATION_DATA,
-        }
-      );
-
-      const { passwordHash, verificationToken: vt, ...userData } = user._doc;
-      const redirectUrl = `asutpdigital://verification-success?token=${jwtToken}`;
-      return res.redirect(redirectUrl);
-    } else {
+    if (!user) {
       return res
         .status(400)
         .json({ message: "Неправильний або застарілий токен підтвердження." });
     }
+
+    user.isVerified = true;
+    user.verificationToken = undefined;
+    await user.save();
+
+    const jwtToken = jwt.sign({ _id: user._id, role: user.role }, "secret123", {
+      expiresIn: TOKEN_EXPIRATION_DATA,
+    });
+
+    const { passwordHash, verificationToken: vt, ...userData } = user._doc;
+    const redirectUrl = `asutpdigital://verification-success?token=${jwtToken}`;
+    return res.redirect(redirectUrl);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Помилка під час підтвердження email." });
@@ -99,12 +100,12 @@ export const login = async (req, res) => {
     const user = await UserModel.findOne({ email: req.body.email });
 
     if (!user) {
-      return res.status(404).json({ message: "Пользователь не найден." });
+      return res.status(404).json({ message: "Користувача не знайдено." });
     }
 
     if (!user.isVerified) {
       return res.status(400).json({
-        message: "Email не подтвержден. Пожалуйста, проверьте свою почту.",
+        message: "Email не підтверджено. Будь ласка, перевірте свою пошту.",
       });
     }
 
@@ -114,19 +115,19 @@ export const login = async (req, res) => {
     );
 
     if (!isValidPass) {
-      return res.status(400).json({ message: "Неверный пароль." });
+      return res.status(400).json({ message: "Невірний пароль." });
     }
 
     const token = jwt.sign({ _id: user._id, role: user.role }, "secret123", {
       expiresIn: TOKEN_EXPIRATION_DATA,
     });
 
-    const { passwordHash, verificationToken, ...userData } = user._doc; // Исключаем verificationToken
+    const { passwordHash, verificationToken, ...userData } = user._doc;
 
     res.json({ ...userData, token });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Не удалось авторизоваться." });
+    res.status(500).json({ message: "Не вдалося авторизуватися." });
   }
 };
 
@@ -138,7 +139,7 @@ export const getMe = async (req, res) => {
       return res.status(404).json({ message: "Пользователь не найден." });
     }
 
-    const { passwordHash, verificationToken, ...userData } = user._doc; // Исключаем verificationToken
+    const { passwordHash, verificationToken, ...userData } = user._doc;
 
     res.json(userData);
   } catch (err) {
@@ -149,7 +150,7 @@ export const getMe = async (req, res) => {
 
 export const getAllUsers = async (req, res) => {
   try {
-    const users = await UserModel.find().select('-passwordHash').exec(); // Исключаем пароль из ответа
+    const users = await UserModel.find().select("-passwordHash").exec();
     const totalCount = await UserModel.countDocuments();
     res.json({
       data: users,
@@ -166,22 +167,30 @@ export const getAllUsers = async (req, res) => {
 export const getUserById = async (req, res) => {
   try {
     const userId = req.params.id;
-    const user = await UserModel.findById(userId).select('-passwordHash').exec();
+    const user = await UserModel.findById(userId)
+      .select("-passwordHash")
+      .exec();
     if (!user) {
-      return res.status(404).json({ message: 'Користувача не знайдено' });
+      return res.status(404).json({ message: "Користувача не знайдено" });
     }
     res.json(user);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Не вдалося отримати дані користувача' });
+    res.status(500).json({ message: "Сервер, Не вдалося отримати дані користувача" });
   }
 };
 
 export const updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    const { fullName, email, role, password } = req.body;
-    const updateData = { fullName, email, role };
+    const { fullName, email, password } = req.body;
+
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Користувача не знайдено' });
+    }
+
+    const updateData = { fullName, email };
 
     if (password) {
       const salt = await bcrypt.genSalt(10);
@@ -189,11 +198,27 @@ export const updateUser = async (req, res) => {
       updateData.passwordHash = hash;
     }
 
-    const updatedUser = await UserModel.findByIdAndUpdate(userId, updateData, { new: true }).select('-passwordHash').exec();
+    // Обробка завантаження аватара, якщо файл присутній
+    if (req.files && req.files.avatar) {
+      const avatarFile = req.files.avatar;
 
-    if (!updatedUser) {
-      return res.status(404).json({ message: 'Користувача не знайдено' });
+      // Видалення старого зображення, якщо воно існує
+      console.log(user)
+      if (user.cloudinaryPublicId) {
+        try {
+          await cloudinary.uploader.destroy(user.cloudinaryPublicId);
+        } catch (error) {
+          console.error('Помилка видалення старого зображення з Cloudinary:', error);
+          // Не блокуємо оновлення користувача, але логуємо помилку
+        }
+      }
+
+      const result = await cloudinary.uploader.upload(avatarFile.tempFilePath);
+      updateData.avatarUrl = result.secure_url;
+      updateData.cloudinaryPublicId = result.public_id; // Зберігаємо public_id
     }
+
+    const updatedUser = await UserModel.findByIdAndUpdate(userId, updateData, { new: true }).select('-passwordHash').exec();
 
     res.json(updatedUser);
   } catch (err) {
