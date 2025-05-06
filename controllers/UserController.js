@@ -17,6 +17,7 @@ export const register = async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
 
+    // Перевірка, чи існує користувач з таким email
     const existingUser = await UserModel.findOne({ email });
     if (existingUser) {
       return res
@@ -36,6 +37,22 @@ export const register = async (req, res) => {
       isVerified: false,
     });
 
+    // Обробка завантаження аватара, якщо файл присутній
+    if (req.files && req.files.avatar) {
+      const avatarFile = req.files.avatar;
+
+      try {
+        const result = await cloudinary.uploader.upload(avatarFile.tempFilePath);
+        doc.avatarUrl = result.secure_url;
+        doc.cloudinaryPublicId = result.public_id; // Зберігаємо public_id
+      } catch (error) {
+        console.error("Помилка при завантаженні зображення на Cloudinary:", error);
+        return res.status(500).json({
+          message: "Помилка при завантаженні зображення.  Будь ласка, спробуйте ще раз.",
+        });
+      }
+    }
+
     const user = await doc.save();
 
     const verificationLink = `${req.protocol}://${req.get(
@@ -52,7 +69,8 @@ export const register = async (req, res) => {
       if (error) {
         console.error("Помилка при надсиланні листа:", error);
         return res.status(500).json({
-          message: "Помилка під час надсилання листа для підтвердження email.",
+          message:
+            "Помилка під час надсилання листа для підтвердження email.",
         });
       }
       console.log("Лист відправлений:", info.response);
@@ -66,6 +84,7 @@ export const register = async (req, res) => {
     res.status(500).json({ message: "Не вдалося зареєструватись." });
   }
 };
+
 
 export const verifyEmail = async (req, res) => {
   try {
@@ -176,7 +195,9 @@ export const getUserById = async (req, res) => {
     res.json(user);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Сервер, Не вдалося отримати дані користувача" });
+    res
+      .status(500)
+      .json({ message: "Сервер, Не вдалося отримати дані користувача" });
   }
 };
 
@@ -187,7 +208,7 @@ export const updateUser = async (req, res) => {
 
     const user = await UserModel.findById(userId);
     if (!user) {
-      return res.status(404).json({ message: 'Користувача не знайдено' });
+      return res.status(404).json({ message: "Користувача не знайдено" });
     }
 
     const updateData = { fullName, email };
@@ -203,12 +224,14 @@ export const updateUser = async (req, res) => {
       const avatarFile = req.files.avatar;
 
       // Видалення старого зображення, якщо воно існує
-      console.log(user)
       if (user.cloudinaryPublicId) {
         try {
           await cloudinary.uploader.destroy(user.cloudinaryPublicId);
         } catch (error) {
-          console.error('Помилка видалення старого зображення з Cloudinary:', error);
+          console.error(
+            "Помилка видалення старого зображення з Cloudinary:",
+            error
+          );
           // Не блокуємо оновлення користувача, але логуємо помилку
         }
       }
@@ -218,11 +241,15 @@ export const updateUser = async (req, res) => {
       updateData.cloudinaryPublicId = result.public_id; // Зберігаємо public_id
     }
 
-    const updatedUser = await UserModel.findByIdAndUpdate(userId, updateData, { new: true }).select('-passwordHash').exec();
+    const updatedUser = await UserModel.findByIdAndUpdate(userId, updateData, {
+      new: true,
+    })
+      .select("-passwordHash")
+      .exec();
 
     res.json(updatedUser);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Не вдалося оновити дані користувача' });
+    res.status(500).json({ message: "Не вдалося оновити дані користувача" });
   }
 };

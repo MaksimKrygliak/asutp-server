@@ -9,7 +9,7 @@ export const registerValidation = [
   body('email', 'Неверный формат почты').isEmail(),
   body('password', 'Пароль має бути мінімум 5 символів').isLength({ min: 5 }),
   body('fullName', "Ім'я має бути довшим за три символи").isLength({ min: 3 }),
-  body('avatarUrl', 'Неправильне посилання на аватарку').optional().isURL(),
+  body('avatarUrl', 'Неправильне посилання на аватарку').optional().isURL()
 ];
 
 export const postCreateValidation = [
