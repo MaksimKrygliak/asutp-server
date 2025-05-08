@@ -5,10 +5,20 @@ import UserModel from "../models/User.js";
 import transporter from "../utils/nodemailerConfig.js";
 import { v2 as cloudinary } from "cloudinary";
 
+const cloud_name = process.env.CLOUD_NAME;
+const api_key = process.env.API_KEY;
+const api_secret = process.env.API_SECRET;
+
+// cloudinary.config({
+//   cloud_name: "dhjnmoauc",
+//   api_key: "218662455584231",
+//   api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
+// });
+
 cloudinary.config({
-  cloud_name: "dhjnmoauc",
-  api_key: "218662455584231",
-  api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
+  cloud_name,
+  api_key,
+  api_secret,
 });
 
 const TOKEN_EXPIRATION_DATA = "7d";
@@ -58,7 +68,6 @@ export const register = async (req, res) => {
     const verificationLink = `${req.protocol}://${req.get(
       "host"
     )}/auth/verify/${verificationToken}`;
-
     const mailOptions = {
       to: email,
       subject: "Підтвердження реєстрації",
@@ -84,7 +93,6 @@ export const register = async (req, res) => {
     res.status(500).json({ message: "Не вдалося зареєструватись." });
   }
 };
-
 
 export const verifyEmail = async (req, res) => {
   try {
@@ -251,5 +259,87 @@ export const updateUser = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Не вдалося оновити дані користувача" });
+  }
+};
+
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await UserModel.findOne({ email });
+
+    if (!user) {
+      // Можна повернути успішну відповідь, щоб не розкривати існування email
+      return res.status(200).json({ message: "Лист для відновлення пароля відправлено на вказаний email." });
+    }
+
+    const resetToken = uuidv4();
+    const resetTokenExpiry = Date.now() + 3600000; // 1 година (в мілісекундах)
+
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpiry = resetTokenExpiry;
+    await user.save();
+    const resetLink = `${req.protocol}://${req.get(
+      "host"
+    )}/auth/reset-password/${resetToken}`;
+
+    const mailOptions = {
+      to: email,
+      subject: "Запит на відновлення пароля",
+      html: `<p>Ви отримали цей лист, оскільки на ваш обліковий запис було надіслано запит на відновлення пароля.</p>
+             <p>Будь ласка, перейдіть за <a href="${resetLink}">цим посиланням</a>, щоб скинути свій пароль. Посилання дійсне протягом 1 години.</p>
+             <p>Якщо ви не надсилали цей запит, проігноруйте цей лист.</p>`,
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.error("Помилка при надсиланні листа для відновлення пароля:", error);
+        return res.status(500).json({
+          message: "Помилка під час надсилання листа для відновлення пароля.",
+        });
+      }
+      console.log("Лист для відновлення пароля відправлено:", info.response);
+      res.status(200).json({
+        message: "Лист для відновлення пароля відправлено на вказаний email.",
+      });
+    });
+  } catch (err) {
+    console.error("Помилка при обробці запиту на відновлення пароля:", err);
+    res.status(500).json({ message: "Не вдалося обробити запит на відновлення пароля." });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword, confirmNewPassword } = req.body;
+
+    if (newPassword !== confirmNewPassword) {
+      return res.status(400).json({ message: "Нові паролі не співпадають." });
+    }
+
+    const user = await UserModel.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpiry: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      return res
+        .status(400)
+        .json({
+          message: "Недійсний або прострочений токен відновлення пароля.",
+        });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    user.passwordHash = passwordHash;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpiry = undefined;
+    await user.save();
+
+    res.status(200).json({ message: "Пароль успішно скинуто." });
+  } catch (err) {
+    console.error("Помилка при скиданні пароля:", err);
+    res.status(500).json({ message: "Не вдалося скинути пароль." });
   }
 };

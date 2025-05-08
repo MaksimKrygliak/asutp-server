@@ -17,15 +17,12 @@ import { v2 as cloudinary } from "cloudinary";
 import fileUpload from "express-fileupload";
 
 const mongoUri = process.env.MONGODB_URI;
-if (!mongoUri) {
-  console.error("Ошибка: Переменная окружения MONGODB_URI не определена.");
-  process.exit(1);
-}
+const cloud_name = process.env.CLOUD_NAME;
+const api_key = process.env.API_KEY;
+const api_secret = process.env.API_SECRET;
 
 mongoose
-  // .connect(
-  //   "mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp"
-  // )
+  // .connect("mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp")
   .connect(mongoUri)
   .then(() => console.log("DB ok"))
   .catch((err) => console.log("DB error", err));
@@ -43,11 +40,18 @@ app.use(
 );
 app.use("/uploads", express.static("uploads"));
 
+// cloudinary.config({
+//   cloud_name: "dhjnmoauc",
+//   api_key: "218662455584231",
+//   api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
+// });
+
 cloudinary.config({
-  cloud_name: "dhjnmoauc",
-  api_key: "218662455584231",
-  api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
+  cloud_name,
+  api_key,
+  api_secret,
 });
+
 app.post("/upload-avatar", checkAuth, async (req, res) => {
   try {
     if (!req.files || !req.files.avatar) {
@@ -105,6 +109,11 @@ app.post(
 );
 app.get("/auth/verify/:token", UserController.verifyEmail);
 app.get("/auth/me", checkAuth, UserController.getMe);
+
+app.post("/auth/forgot-password:token", UserController.forgotPassword);
+// Ось тут ви повинні використовувати POST для обробки скидання пароля
+app.post("/auth/reset-password:token", UserController.resetPassword);
+
 
 app.get("/users", checkAuth, UserController.getAllUsers);
 app.get("/users/:id", checkAuth, UserController.getUserById);

@@ -24,14 +24,16 @@ const UserSchema = new mongoose.Schema(
     verificationToken: String,
     role: {
       type: String,
-      enum: ["звичайний", "адміністратор"],
-      default: "звичайний",
+      enum: ["адміністратор", 1, 2, 3],
+      default: 1,
     },
     viewedPosts: {
       type: [mongoose.Schema.Types.ObjectId],
       default: [], // Встановлюємо порожній масив за замовчуванням
       ref: 'Post', // Посилання на модель Post (якщо потрібно)
     },
+    resetPasswordToken: String, // Токен для сброса пароля
+    resetPasswordExpires: Date,
   },
   {
     timestamps: true,
