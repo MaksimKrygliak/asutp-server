@@ -212,14 +212,13 @@ export const getUserById = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    const { fullName, email, password } = req.body;
-
+    const { fullName, email, password, role } = req.body;
     const user = await UserModel.findById(userId);
     if (!user) {
       return res.status(404).json({ message: "Користувача не знайдено" });
     }
 
-    const updateData = { fullName, email };
+    const updateData = { fullName, email, role };
 
     if (password) {
       const salt = await bcrypt.genSalt(10);

@@ -40,6 +40,7 @@ app.use(
 );
 app.use("/uploads", express.static("uploads"));
 
+
 // cloudinary.config({
 //   cloud_name: "dhjnmoauc",
 //   api_key: "218662455584231",
@@ -51,6 +52,7 @@ cloudinary.config({
   api_key,
   api_secret,
 });
+
 
 app.post("/upload-avatar", checkAuth, async (req, res) => {
   try {
