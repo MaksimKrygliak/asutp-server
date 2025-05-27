@@ -26,19 +26,21 @@ const PostSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    viewsCount: {
-      type: Number,
-      default: 0,
+    viewedByUsers: {
+      type: Array,
+      default: [],
     },
     resolved: {
       type: Boolean,
+      default: null,
     },
-    comments: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Comment",
-      },
-    ],
+    isDeleted: { type: Boolean, default: false }, // Флаг мягкого удаления
+    deletedAt: { type: Date, default: null }, // Время мягкого удаления
+    __localId: {
+      type: String, // Для хранения UUID с клиента
+      unique: true, // Должен быть уникальным для каждого поста (клиентский UUID)
+      sparse: true, // Позволяет документам не иметь этого поля, если оно не нужно
+    },
     imageUrl: String,
   },
   {

@@ -11,27 +11,36 @@ const UserSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
+    engineerPosition: {
+      type: String,
+      required: true,
+    },
     passwordHash: {
       type: String,
       required: true,
     },
-    avatarUrl: String,
-    cloudinaryPublicId: String,
+    avatarUrl: {
+      type: String,
+      default: "",
+    }, 
+    cloudinaryPublicId: {
+      type: String,
+      default: "",
+    },
     isVerified: {
       type: Boolean,
       default: false,
     },
-    verificationToken: String,
     role: {
       type: String,
       enum: ["адміністратор", 1, 2, 3],
       default: 1,
     },
-    viewedPosts: {
-      type: [mongoose.Schema.Types.ObjectId],
-      default: [], // Встановлюємо порожній масив за замовчуванням
-      ref: 'Post', // Посилання на модель Post (якщо потрібно)
-    },
+    viewedPosts: [{
+      type: String, // <-- ИЗМЕНИТЕ ЭТО С ObjectId НА String
+      trim: true // Опционально: убирает пробелы
+    }],
+    verificationToken: String,
     resetPasswordToken: String, // Токен для сброса пароля
     resetPasswordExpires: Date,
   },

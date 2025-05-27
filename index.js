@@ -20,10 +20,13 @@ const mongoUri = process.env.MONGODB_URI;
 const cloud_name = process.env.CLOUD_NAME;
 const api_key = process.env.API_KEY;
 const api_secret = process.env.API_SECRET;
+const latest_app_version = process.env.LATEST_APP_VERSION;
 
 mongoose
-  // .connect("mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp")
-  .connect(mongoUri)
+  .connect(
+    mongoUri ||
+      "mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp"
+  )
   .then(() => console.log("DB ok"))
   .catch((err) => console.log("DB error", err));
 
@@ -40,19 +43,11 @@ app.use(
 );
 app.use("/uploads", express.static("uploads"));
 
-
-// cloudinary.config({
-//   cloud_name: "dhjnmoauc",
-//   api_key: "218662455584231",
-//   api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
-// });
-
 cloudinary.config({
-  cloud_name,
-  api_key,
-  api_secret,
+  cloud_name: cloud_name || "dhjnmoauc",
+  api_key: api_key || "218662455584231",
+  api_secret: api_secret || "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
 });
-
 
 app.post("/upload-avatar", checkAuth, async (req, res) => {
   try {
@@ -97,6 +92,21 @@ app.post("/upload", checkAuth, (req, res) => {
   });
 });
 
+app.get("/app_config", (req, res) => {
+  try {
+    const config = {
+      latest_app_version: latest_app_version || "2.0.0",
+      update_url_android:
+        "https://drive.google.com/uc?export=download&id=11X1g5k2V3nr85u-0ctrTKZYUrwPrLPxf",
+    };
+
+    res.json(config);
+  } catch (error) {
+    console.error("Error fetching app config:", error);
+    res.status(500).json({ message: "Failed to retrieve app configuration." });
+  }
+});
+
 app.post(
   "/auth/login",
   loginValidation,
@@ -113,13 +123,16 @@ app.get("/auth/verify/:token", UserController.verifyEmail);
 app.get("/auth/me", checkAuth, UserController.getMe);
 
 app.post("/auth/forgot-password:token", UserController.forgotPassword);
-// Ось тут ви повинні використовувати POST для обробки скидання пароля
 app.post("/auth/reset-password:token", UserController.resetPassword);
-
 
 app.get("/users", checkAuth, UserController.getAllUsers);
 app.get("/users/:id", checkAuth, UserController.getUserById);
 app.patch("/users/:id", checkAuth, UserController.updateUser);
+app.patch(
+  "/users/:id/viewed-posts",
+  checkAuth,
+  UserController.updateViewedPosts
+);
 
 app.get("/phoneNumbers", PhoneNumberController.getAll);
 app.get("/phoneNumbers/:id", PhoneNumberController.getOne);
@@ -130,6 +143,7 @@ app.patch("/phoneNumbers/:id", checkAuth, PhoneNumberController.update);
 app.get("/tags", PostController.getLastTags);
 app.get("/posts", PostController.getAll);
 app.get("/posts/tags", PostController.getLastTags);
+app.get("/posts/changes", checkAuth, PostController.getChanges);
 app.get("/posts/:id", PostController.getOne);
 app.post(
   "/posts",
@@ -138,11 +152,14 @@ app.post(
   handleValidationErrors,
   PostController.create
 );
-app.delete("/posts/:id", checkAuth, PostController.remove);
+app.post("/posts/batch-create", checkAuth, PostController.batchCreate);
+app.post("/posts/batch-delete", checkAuth, PostController.batchDeletePosts);
+app.patch("/posts/batch-update", checkAuth, PostController.batchUpdatePosts);
+
+app.delete("/posts/:id", checkAuth, PostController.deletePost);
 app.patch(
   "/posts/:id",
   checkAuth,
-  // postCreateValidation,
   handleValidationErrors,
   PostController.update
 );

@@ -5,33 +5,33 @@ import UserModel from "../models/User.js";
 import transporter from "../utils/nodemailerConfig.js";
 import { v2 as cloudinary } from "cloudinary";
 
-const cloud_name = process.env.CLOUD_NAME;
-const api_key = process.env.API_KEY;
-const api_secret = process.env.API_SECRET;
+// const cloud_name = process.env.CLOUD_NAME;
+// const api_key = process.env.API_KEY;
+// const api_secret = process.env.API_SECRET;
 
 // cloudinary.config({
-//   cloud_name: "dhjnmoauc",
-//   api_key: "218662455584231",
-//   api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
+//   cloud_name,
+//   api_key,
+//   api_secret,
 // });
 
 cloudinary.config({
-  cloud_name,
-  api_key,
-  api_secret,
+  cloud_name: "dhjnmoauc",
+  api_key: "218662455584231",
+  api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
 });
 
-const TOKEN_EXPIRATION_DATA = "7d";
+const TOKEN_EXPIRATION_DATA = "30d";
 
 export const register = async (req, res) => {
   try {
-    const { fullName, email, password } = req.body;
+    const { fullName, email, engineerPosition, password } = req.body;
 
     // Перевірка, чи існує користувач з таким email
     const existingUser = await UserModel.findOne({ email });
     if (existingUser) {
       return res
-        .status(400)
+        .status(409)
         .json({ message: "Користувач з таким email вже існує." });
     }
 
@@ -42,6 +42,7 @@ export const register = async (req, res) => {
     const doc = new UserModel({
       fullName,
       email,
+      engineerPosition,
       passwordHash,
       verificationToken,
       isVerified: false,
@@ -52,13 +53,19 @@ export const register = async (req, res) => {
       const avatarFile = req.files.avatar;
 
       try {
-        const result = await cloudinary.uploader.upload(avatarFile.tempFilePath);
+        const result = await cloudinary.uploader.upload(
+          avatarFile.tempFilePath
+        );
         doc.avatarUrl = result.secure_url;
         doc.cloudinaryPublicId = result.public_id; // Зберігаємо public_id
       } catch (error) {
-        console.error("Помилка при завантаженні зображення на Cloudinary:", error);
+        console.error(
+          "Помилка при завантаженні зображення на Cloudinary:",
+          error
+        );
         return res.status(500).json({
-          message: "Помилка при завантаженні зображення.  Будь ласка, спробуйте ще раз.",
+          message:
+            "Помилка при завантаженні зображення.  Будь ласка, спробуйте ще раз.",
         });
       }
     }
@@ -78,8 +85,7 @@ export const register = async (req, res) => {
       if (error) {
         console.error("Помилка при надсиланні листа:", error);
         return res.status(500).json({
-          message:
-            "Помилка під час надсилання листа для підтвердження email.",
+          message: "Помилка під час надсилання листа для підтвердження email.",
         });
       }
       console.log("Лист відправлений:", info.response);
@@ -212,13 +218,13 @@ export const getUserById = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    const { fullName, email, password, role } = req.body;
+    const { fullName, email, engineerPosition, password, role } = req.body;
     const user = await UserModel.findById(userId);
     if (!user) {
       return res.status(404).json({ message: "Користувача не знайдено" });
     }
 
-    const updateData = { fullName, email, role };
+    const updateData = { fullName, email, engineerPosition, role };
 
     if (password) {
       const salt = await bcrypt.genSalt(10);
@@ -268,7 +274,9 @@ export const forgotPassword = async (req, res) => {
 
     if (!user) {
       // Можна повернути успішну відповідь, щоб не розкривати існування email
-      return res.status(200).json({ message: "Лист для відновлення пароля відправлено на вказаний email." });
+      return res.status(200).json({
+        message: "Лист для відновлення пароля відправлено на вказаний email.",
+      });
     }
 
     const resetToken = uuidv4();
@@ -291,7 +299,10 @@ export const forgotPassword = async (req, res) => {
 
     transporter.sendMail(mailOptions, (error, info) => {
       if (error) {
-        console.error("Помилка при надсиланні листа для відновлення пароля:", error);
+        console.error(
+          "Помилка при надсиланні листа для відновлення пароля:",
+          error
+        );
         return res.status(500).json({
           message: "Помилка під час надсилання листа для відновлення пароля.",
         });
@@ -303,7 +314,9 @@ export const forgotPassword = async (req, res) => {
     });
   } catch (err) {
     console.error("Помилка при обробці запиту на відновлення пароля:", err);
-    res.status(500).json({ message: "Не вдалося обробити запит на відновлення пароля." });
+    res
+      .status(500)
+      .json({ message: "Не вдалося обробити запит на відновлення пароля." });
   }
 };
 
@@ -321,11 +334,9 @@ export const resetPassword = async (req, res) => {
     });
 
     if (!user) {
-      return res
-        .status(400)
-        .json({
-          message: "Недійсний або прострочений токен відновлення пароля.",
-        });
+      return res.status(400).json({
+        message: "Недійсний або прострочений токен відновлення пароля.",
+      });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -340,5 +351,83 @@ export const resetPassword = async (req, res) => {
   } catch (err) {
     console.error("Помилка при скиданні пароля:", err);
     res.status(500).json({ message: "Не вдалося скинути пароль." });
+  }
+};
+
+export const updateViewedPosts = async (req, res) => {
+  const userId = req.params.id;
+  console.log("111 - User ID:", userId);
+  const { viewedPosts: clientViewedPostIds } = req.body; // Переименовываем, чтобы не путать
+  console.log(req.body)
+  console.log("222 - Client viewedPosts:", clientViewedPostIds);
+
+  if (!Array.isArray(clientViewedPostIds)) {
+    return res.status(400).json({ message: "viewedPosts must be an array." });
+  }
+
+  try {
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // 1. Получаем текущий список просмотренных постов из базы данных пользователя
+    // Убедитесь, что user.viewedPostIds существует и является массивом.
+    // Если viewedPostIds хранится как массив ObjectId, то map((id) => id.toString()) преобразует их в строки.
+    // Если поле может быть null/undefined, используйте || []
+    const currentViewedServerSet = new Set(
+      (user.viewedPosts || []).map((id) => id.toString())
+    );
+    console.log(("user", user.viewedPosts))
+    console.log(
+      "Current viewed on server:",
+      Array.from(currentViewedServerSet)
+    );
+
+    // 2. Находим новые ID из клиента, которых нет на сервере
+    const newViewedFromClient = clientViewedPostIds.filter(
+      (id) => !currentViewedServerSet.has(id.toString()) // Сравниваем client ID со списком на сервере
+    );
+    console.log(
+      "newViewedFromClient (found new unique IDs from client):",
+      newViewedFromClient
+    );
+
+    if (newViewedFromClient.length > 0) {
+      // 3. Добавляем только новые уникальные ID к существующему списку пользователя
+      // user.viewedPostIds.push(...newViewedFromClient); // Если user.viewedPostIds - это простой массив в схеме
+      // Если это Mongoose Array, то push может быть достаточно
+      // Но часто лучше использовать $addToSet или переназначить
+      // Более надежный способ обновления массива в Mongoose:
+      // Используем $addToSet, чтобы добавить новые элементы только если их еще нет.
+      await UserModel.updateOne(
+        { _id: userId },
+        { $addToSet: { viewedPosts: { $each: newViewedFromClient } } }
+      );
+      // После обновления в БД, нужно получить обновленный документ, чтобы вернуть его
+      const updatedUser = await UserModel.findById(userId);
+      console.log("updatedUser", updatedUser)
+      user.viewedPosts = updatedUser.viewedPosts; // Обновляем локальный объект user
+
+      console.log(
+        `User ${userId} viewedPost successfully updated with ${newViewedFromClient.length} new IDs.`
+      );
+    } else {
+      console.log(
+        `User ${userId} viewedPost already up-to-date. No new viewed posts to add.`
+      );
+    }
+
+    // 4. Возвращаем актуальный список просмотренных постов из ОБНОВЛЕННОГО объекта user
+    return res.status(200).json({
+      success: true,
+      message: "Список просмотренных постов успешно обновлен",
+      viewedPosts: (user.viewedPosts || []).map((id) => id.toString()), // Возвращаем то, что сейчас в БД
+    });
+  } catch (err) {
+    console.error("Error updating viewed posts:", err);
+    return res
+      .status(500)
+      .json({ message: "Failed to update viewed posts.", error: err.message });
   }
 };
