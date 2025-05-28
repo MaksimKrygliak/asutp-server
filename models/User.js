@@ -22,7 +22,7 @@ const UserSchema = new mongoose.Schema(
     avatarUrl: {
       type: String,
       default: "",
-    }, 
+    },
     cloudinaryPublicId: {
       type: String,
       default: "",
@@ -36,10 +36,11 @@ const UserSchema = new mongoose.Schema(
       enum: ["адміністратор", 1, 2, 3],
       default: 1,
     },
-    viewedPosts: [{
-      type: String, // <-- ИЗМЕНИТЕ ЭТО С ObjectId НА String
-      trim: true // Опционально: убирает пробелы
-    }],
+    viewedPosts: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+      },
+    ],
     verificationToken: String,
     resetPasswordToken: String, // Токен для сброса пароля
     resetPasswordExpires: Date,

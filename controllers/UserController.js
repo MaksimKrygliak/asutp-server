@@ -4,21 +4,18 @@ import { v4 as uuidv4 } from "uuid";
 import UserModel from "../models/User.js";
 import transporter from "../utils/nodemailerConfig.js";
 import { v2 as cloudinary } from "cloudinary";
+import mongoose from "mongoose";
+const ObjectId = mongoose.Types.ObjectId;
 
-// const cloud_name = process.env.CLOUD_NAME;
-// const api_key = process.env.API_KEY;
-// const api_secret = process.env.API_SECRET;
+const cloud_name = process.env.CLOUD_NAME;
+const api_key = process.env.API_KEY;
+const api_secret = process.env.API_SECRET;
 
-// cloudinary.config({
-//   cloud_name,
-//   api_key,
-//   api_secret,
-// });
 
 cloudinary.config({
-  cloud_name: "dhjnmoauc",
-  api_key: "218662455584231",
-  api_secret: "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
+  cloud_name: cloud_name || "dhjnmoauc",
+  api_key: api_key || "218662455584231",
+  api_secret: api_secret || "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
 });
 
 const TOKEN_EXPIRATION_DATA = "30d";
@@ -356,78 +353,83 @@ export const resetPassword = async (req, res) => {
 
 export const updateViewedPosts = async (req, res) => {
   const userId = req.params.id;
-  console.log("111 - User ID:", userId);
-  const { viewedPosts: clientViewedPostIds } = req.body; // Переименовываем, чтобы не путать
-  console.log(req.body)
-  console.log("222 - Client viewedPosts:", clientViewedPostIds);
-
-  if (!Array.isArray(clientViewedPostIds)) {
-    return res.status(400).json({ message: "viewedPosts must be an array." });
+  const { viewedPostsArray } = req.body; // Це масив рядків, отриманий з клієнта
+  console.log("viewedPostsArray", viewedPostsArray)
+  if (!Array.isArray(viewedPostsArray)) {
+    return res.status(400).json({ message: "viewedPostsArray повинен бути масивом" });
   }
 
   try {
+    // 1. Знайдіть користувача в базі даних
     const user = await UserModel.findById(userId);
     if (!user) {
-      return res.status(404).json({ message: "User not found." });
+      return res.status(404).json({ message: "Користувач не знайдений" });
     }
 
-    // 1. Получаем текущий список просмотренных постов из базы данных пользователя
-    // Убедитесь, что user.viewedPostIds существует и является массивом.
-    // Если viewedPostIds хранится как массив ObjectId, то map((id) => id.toString()) преобразует их в строки.
-    // Если поле может быть null/undefined, используйте || []
+    // 2. Отримайте поточний список viewedPosts користувача з БД і перетворіть його на Set рядків для швидкого пошуку
+    // Переконуємось, що viewedPosts існує і є масивом
     const currentViewedServerSet = new Set(
       (user.viewedPosts || []).map((id) => id.toString())
     );
-    console.log(("user", user.viewedPosts))
-    console.log(
-      "Current viewed on server:",
-      Array.from(currentViewedServerSet)
-    );
+    console.log("Поточні переглянуті пости на сервері (Set):", currentViewedServerSet);
 
-    // 2. Находим новые ID из клиента, которых нет на сервере
-    const newViewedFromClient = clientViewedPostIds.filter(
-      (id) => !currentViewedServerSet.has(id.toString()) // Сравниваем client ID со списком на сервере
-    );
-    console.log(
-      "newViewedFromClient (found new unique IDs from client):",
-      newViewedFromClient
-    );
-
-    if (newViewedFromClient.length > 0) {
-      // 3. Добавляем только новые уникальные ID к существующему списку пользователя
-      // user.viewedPostIds.push(...newViewedFromClient); // Если user.viewedPostIds - это простой массив в схеме
-      // Если это Mongoose Array, то push может быть достаточно
-      // Но часто лучше использовать $addToSet или переназначить
-      // Более надежный способ обновления массива в Mongoose:
-      // Используем $addToSet, чтобы добавить новые элементы только если их еще нет.
-      await UserModel.updateOne(
-        { _id: userId },
-        { $addToSet: { viewedPosts: { $each: newViewedFromClient } } }
-      );
-      // После обновления в БД, нужно получить обновленный документ, чтобы вернуть его
-      const updatedUser = await UserModel.findById(userId);
-      console.log("updatedUser", updatedUser)
-      user.viewedPosts = updatedUser.viewedPosts; // Обновляем локальный объект user
-
-      console.log(
-        `User ${userId} viewedPost successfully updated with ${newViewedFromClient.length} new IDs.`
-      );
-    } else {
-      console.log(
-        `User ${userId} viewedPost already up-to-date. No new viewed posts to add.`
-      );
+    // 3. Фільтруємо viewedPostsArray, щоб знайти лише ті ID, яких ще немає на сервері
+    // Валідуємо і перетворюємо кожен ID у ObjectId
+    const newUniqueViewedFromClient = [];
+    for (const idString of viewedPostsArray) {
+      try {
+        // Спробуємо створити ObjectId. Якщо рядок недійсний, це викине помилку.
+        const objectId = new ObjectId(idString);
+        if (!currentViewedServerSet.has(objectId.toString())) {
+          newUniqueViewedFromClient.push(objectId); // Додаємо як ObjectId
+        }
+      } catch (e) {
+        console.warn(`Недійсний ObjectId від клієнта: ${idString}. Пропущено.`);
+        // Можна відправити помилку клієнту або просто проігнорувати недійсні ID
+      }
     }
 
-    // 4. Возвращаем актуальный список просмотренных постов из ОБНОВЛЕННОГО объекта user
-    return res.status(200).json({
-      success: true,
-      message: "Список просмотренных постов успешно обновлен",
-      viewedPosts: (user.viewedPosts || []).map((id) => id.toString()), // Возвращаем то, что сейчас в БД
-    });
+    console.log(
+      "Нові унікальні ID з клієнта (як ObjectId):",
+      newUniqueViewedFromClient
+    );
+
+    // 4. Оновлюємо документ користувача в MongoDB, використовуючи $addToSet для додавання нових унікальних ID
+    if (newUniqueViewedFromClient.length > 0) {
+      const result = await UserModel.updateOne(
+        { _id: userId },
+        { $addToSet: { viewedPosts: { $each: newUniqueViewedFromClient } } }
+      );
+      console.log(`Результат оновлення MongoDB:`, result);
+
+      // Отримайте оновлений документ користувача після операції, щоб повернути актуальні дані
+      // Або, якщо ви впевнені, що операція успішна, можна оновити локальний об'єкт 'user'
+      // Але краще перечитати з БД для надійності
+      const updatedUser = await UserModel.findById(userId);
+
+      return res.status(200).json({
+        success: true,
+        message: "Список проглянутих постів успішно оновлено",
+        // Повертаємо актуальний список viewedPosts як масив рядків
+        viewedPosts: (updatedUser.viewedPosts || []).map((id) => id.toString()),
+      });
+    } else {
+      console.log(
+        `Користувач ${userId} viewedPosts вже актуальний. Немає нових переглянутих постів для додавання.`
+      );
+      // Якщо немає нових постів для додавання, все одно повертаємо поточний стан
+      return res.status(200).json({
+        success: true,
+        message: "Список проглянутих постів вже актуальний",
+        viewedPosts: (user.viewedPosts || []).map((id) => id.toString()), // Повертаємо існуючі
+      });
+    }
   } catch (err) {
-    console.error("Error updating viewed posts:", err);
-    return res
-      .status(500)
-      .json({ message: "Failed to update viewed posts.", error: err.message });
+    console.error("Помилка при оновленні проглянутих постів:", err);
+    // Обробка помилок парсингу ObjectId (наприклад, якщо client send 'invalid_id')
+    if (err.name === 'BSONTypeError' || err.name === 'CastError') {
+      return res.status(400).json({ message: "Один або декілька ID постів є недійсними." });
+    }
+    return res.status(500).json({ message: "Не вдалося оновити проглянуті пости.", error: err.message });
   }
 };

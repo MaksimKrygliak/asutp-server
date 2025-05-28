@@ -214,7 +214,6 @@ export const getChanges = async (req, res) => {
     // 1. Получаем дату последней синхронизации от клиента.
     // Если 'since' не передан (первая синхронизация), используем начало эпохи.
     const since = req.query.since ? new Date(req.query.since) : new Date(0);
-    console.log("since", since);
     // --- Запрос для постов, которые были СОЗДАНЫ ИЛИ ОБНОВЛЕНЫ ---
     // Нам нужны посты, у которых:
     // a) updatedAt >= since ИЛИ createdAt >= since (чтобы поймать новые и обновленные)
@@ -548,9 +547,7 @@ export const batchCreate = async (req, res) => {
   }
 };
 export const batchUpdatePosts = async (req, res) => {
-  console.log("Batch Update: Получен запрос на пакетное обновление постов.");
   const updates = req.body; // Ожидаем массив объектов обновлений
-  console.log(updates);
   if (!Array.isArray(updates) || updates.length === 0) {
     return res
       .status(400)
