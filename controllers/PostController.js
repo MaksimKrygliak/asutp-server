@@ -227,6 +227,25 @@ export const getChanges = async (req, res) => {
       .populate("user") // Если поле 'user' это ObjectId и вы хотите подтянуть данные пользователя
       .lean() // Преобразует Mongoose-документы в простые JavaScript-объекты для чистоты
       .exec();
+    
+      // Збираємо всі унікальні ID користувачів з отриманих постів
+  const allUserIdsInChanges = new Set();
+  createdOrUpdatedPosts.forEach(post => {
+    if (post.user && post.user._id) {
+      allUserIdsInChanges.add(post.user._id.toString());
+    }
+    if (Array.isArray(post.viewedByUsers)) {
+      post.viewedByUsers.forEach(userId => {
+        allUserIdsInChanges.add(userId.toString());
+      });
+    }
+  });
+
+  // Завантажуємо інформацію про цих користувачів
+  const referencedUsers = await User.find(
+    { _id: { $in: Array.from(allUserIdsInChanges) } },
+    "fullName" // Повертаємо тільки fullName та _id
+  ).lean();
 
     // --- Запрос для ID постов, которые были УДАЛЕНЫ ---
     // Нам нужны _id постов, у которых:
@@ -253,6 +272,7 @@ export const getChanges = async (req, res) => {
       createdOrUpdatedPosts,
       deletedPostIds,
       serverCurrentTimestamp,
+      referencedUsers,
     });
   } catch (err) {
     console.error("Server: Ошибка в контроллере getChanges:", err);
