@@ -323,7 +323,7 @@ export const batchCreate = async (req, res) => {
         type: itemData.type || "інформаційна",
         resolved: null, // Початкове значення
         imageUrl: itemData.imageUrl || null,
-        viewedByUsers: itemData.viewedByUsers
+        viewedByUsers: itemData.viewedByUsers,
         // createdAt та updatedAt будуть встановлені Mongoose, якщо у схемі є timestamps: true
         // Якщо їх тут явно встановити, Mongoose їх ПЕРЕПИШЕ при збереженні.
         // Тому краще їх тут не вказувати, якщо ви покладаєтесь на timestamps: true
@@ -637,72 +637,76 @@ export const batchUpdatePosts = async (req, res) => {
   }
 };
 export const batchDeletePosts = async (req, res) => {
-  console.log("Batch Delete: Получен запрос на пакетное удаление постов.");
-  const { ids } = req.body; // Ожидаем массив ID для удаления
+  console.log(
+    "Batch Delete: Получен запрос на пакетное МЯГКОЕ удаление постов."
+  );
+  const { ids } = req.body;
 
   if (!Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ message: "IDs must be a non-empty array." });
+    return res.status(400).json({ message: "IDs повинен бути массивом" });
   }
 
   const successIds = [];
   const failedIds = [];
 
-  // Преобразуем строковые ID в ObjectId и фильтруем невалидные
-  const objectIdsToDelete = ids
+  const objectIdsToSoftDelete = ids
     .filter((id) => mongoose.Types.ObjectId.isValid(id))
     .map((id) => new mongoose.Types.ObjectId(id));
 
-  if (objectIdsToDelete.length === 0) {
+  console.log("objectIdsToSoftDelete", objectIdsToSoftDelete);
+
+  if (objectIdsToSoftDelete.length === 0) {
     return res
       .status(400)
-      .json({ message: "No valid Object IDs provided for deletion." });
+      .json({ message: "No valid Object IDs provided for soft deletion." });
   }
 
   try {
-    // Опционально: Проверка прав доступа.
-    // Вы можете получить посты по ID и проверить, что req.user._id является владельцем или администратором.
-    // const postsToDelete = await PostModel.find({ _id: { $in: objectIdsToDelete } });
-    // const authorizedPostIds = postsToDelete.filter(post => post.user.toString() === req.user._id.toString()).map(post => post._id);
-    // const unauthorizedIds = objectIdsToDelete.filter(id => !authorizedPostIds.some(authId => authId.equals(id)));
-    // if (unauthorizedIds.length > 0) {
-    //     failedIds.push(...unauthorizedIds.map(id => ({ _id: id.toString(), message: 'Not authorized to delete this post.' })));
-    //     objectIdsToDelete = authorizedPostIds; // Удаляем только те, на которые есть права
-    // }
+    // --- ИЗМЕНЕНИЕ ЗДЕСЬ: используем updateMany вместо deleteMany ---
+    const result = await PostModel.updateMany(
+      {
+        _id: { $in: objectIdsToSoftDelete },
+        isDeleted: false, // Опционально: обновлять только если пост еще не помечен как удаленный
+      },
+      {
+        $set: {
+          isDeleted: true,
+          deletedAt: new Date(),
+          updatedAt: new Date(), // Важно: Обновляем updatedAt, чтобы getChanges это "увидел"
+        },
+      }
+    );
 
-    const result = await PostModel.deleteMany({
-      _id: { $in: objectIdsToDelete },
-    });
-
-    if (result.deletedCount > 0) {
-      // Для простоты, считаем все запрошенные валидные ID успешно удаленными
-      // В более сложной логике, можно проверять каждый ID по result.deletedCount
-      // или использовать `bulkWrite` для более детального отчета
-      objectIdsToDelete.forEach((id) => successIds.push(id.toString()));
+    if (result.modifiedCount > 0) {
+      // modifiedCount показывает, сколько документов было изменено
+      objectIdsToSoftDelete.forEach((id) => successIds.push(id.toString()));
+    } else {
+      // Если ни один документ не был изменен (например, если они уже были удалены)
+      objectIdsToSoftDelete.forEach((id) => failedIds.push(id.toString()));
     }
 
     console.log(
-      `Batch Delete: Запрошено ${ids.length} ID, удалено ${result.deletedCount} постов.`
+      `Batch Soft Delete: Запрошено ${ids.length} ID, помечено как удаленные ${result.modifiedCount} постов.`
     );
 
     if (failedIds.length > 0) {
-      // Если были ошибки авторизации или другие
       return res.status(207).json({
-        // 207 Multi-Status
-        message: "Batch deletion completed with some failures.",
+        message:
+          "Batch soft deletion completed with some failures (or already deleted).",
         successIds,
         failedIds,
       });
     } else {
       return res.status(200).json({
         success: true,
-        message: `Successfully deleted ${result.deletedCount} posts.`,
+        message: `Successfully soft deleted ${result.modifiedCount} posts.`,
         successIds,
       });
     }
   } catch (error) {
-    console.error("Ошибка при пакетном удалении постов:", error);
+    console.error("Ошибка при пакетном мягком удалении постов:", error);
     return res
       .status(500)
-      .json({ message: "Ошибка сервера при пакетном удалении постов." });
+      .json({ message: "Ошибка сервера при пакетном мягком удалении постов." });
   }
 };

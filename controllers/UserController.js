@@ -354,7 +354,6 @@ export const resetPassword = async (req, res) => {
 export const updateViewedPosts = async (req, res) => {
   const userId = req.params.id;
   const { viewedPostsArray } = req.body; // Це масив рядків, отриманий з клієнта
-  console.log("viewedPostsArray", viewedPostsArray)
   if (!Array.isArray(viewedPostsArray)) {
     return res.status(400).json({ message: "viewedPostsArray повинен бути масивом" });
   }
@@ -371,7 +370,6 @@ export const updateViewedPosts = async (req, res) => {
     const currentViewedServerSet = new Set(
       (user.viewedPosts || []).map((id) => id.toString())
     );
-    console.log("Поточні переглянуті пости на сервері (Set):", currentViewedServerSet);
 
     // 3. Фільтруємо viewedPostsArray, щоб знайти лише ті ID, яких ще немає на сервері
     // Валідуємо і перетворюємо кожен ID у ObjectId
