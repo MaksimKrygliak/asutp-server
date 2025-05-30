@@ -21,6 +21,7 @@ const cloud_name = process.env.CLOUD_NAME;
 const api_key = process.env.API_KEY;
 const api_secret = process.env.API_SECRET;
 const latest_app_version = process.env.LATEST_APP_VERSION;
+const force_update_min_version = process.env.FORCE_UPDATE_MIN_VERSION;
 
 mongoose
   .connect(
@@ -96,6 +97,7 @@ app.get("/app_config", (req, res) => {
   try {
     const config = {
       latest_app_version: latest_app_version || "2.0.0",
+      force_update_min_version: force_update_min_version || "1.9.8",
       update_url_android:
         "https://drive.google.com/uc?export=download&id=11X1g5k2V3nr85u-0ctrTKZYUrwPrLPxf",
     };
