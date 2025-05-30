@@ -94,9 +94,8 @@ app.post("/upload", checkAuth, (req, res) => {
 
 app.get("/app_config", (req, res) => {
   try {
-    console.log(latest_app_version)
     const config = {
-      latest_app_version: latest_app_version,
+      latest_app_version: latest_app_version || "2.0.0",
       update_url_android:
         "https://drive.google.com/uc?export=download&id=11X1g5k2V3nr85u-0ctrTKZYUrwPrLPxf",
     };
