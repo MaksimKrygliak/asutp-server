@@ -9,7 +9,10 @@ const PostSchema = new mongoose.Schema(
     text: {
       type: String,
       required: true,
-      unique: true,
+    },
+    pech: {
+      type: String,
+      default: null,
     },
     tags: {
       type: Array,
@@ -37,7 +40,7 @@ const PostSchema = new mongoose.Schema(
     isDeleted: { type: Boolean, default: false }, // Флаг мягкого удаления
     deletedAt: { type: Date, default: null }, // Время мягкого удаления
     __localId: {
-      type: String, // Для хранения UUID с клиента
+      type: mongoose.Schema.Types.ObjectId,
       unique: true, // Должен быть уникальным для каждого поста (клиентский UUID)
       sparse: true, // Позволяет документам не иметь этого поля, если оно не нужно
     },

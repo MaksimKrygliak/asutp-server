@@ -11,14 +11,13 @@ const cloud_name = process.env.CLOUD_NAME;
 const api_key = process.env.API_KEY;
 const api_secret = process.env.API_SECRET;
 
-
 cloudinary.config({
   cloud_name: cloud_name || "dhjnmoauc",
   api_key: api_key || "218662455584231",
   api_secret: api_secret || "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
 });
 
-const TOKEN_EXPIRATION_DATA = "30d";
+const TOKEN_EXPIRATION_DATA = "90d";
 
 export const register = async (req, res) => {
   try {
@@ -43,6 +42,11 @@ export const register = async (req, res) => {
       passwordHash,
       verificationToken,
       isVerified: false,
+      lastSyncTimes: {
+        documents: new Date(0),
+        notes: new Date(0),
+        users: new Date(0),
+      },
     });
 
     // Обробка завантаження аватара, якщо файл присутній
@@ -126,9 +130,9 @@ export const verifyEmail = async (req, res) => {
 };
 
 export const login = async (req, res) => {
+  const { email, password } = req.body;
   try {
-    const user = await UserModel.findOne({ email: req.body.email });
-
+    const user = await UserModel.findOne({ email });
     if (!user) {
       return res.status(404).json({ message: "Користувача не знайдено." });
     }
@@ -139,10 +143,7 @@ export const login = async (req, res) => {
       });
     }
 
-    const isValidPass = await bcrypt.compare(
-      req.body.password,
-      user._doc.passwordHash
-    );
+    const isValidPass = await bcrypt.compare(password, user._doc.passwordHash);
 
     if (!isValidPass) {
       return res.status(400).json({ message: "Невірний пароль." });
@@ -151,10 +152,9 @@ export const login = async (req, res) => {
     const token = jwt.sign({ _id: user._id, role: user.role }, "secret123", {
       expiresIn: TOKEN_EXPIRATION_DATA,
     });
-
     const { passwordHash, verificationToken, ...userData } = user._doc;
 
-    res.json({ ...userData, token });
+    res.json({ token });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Не вдалося авторизуватися." });
@@ -181,10 +181,8 @@ export const getMe = async (req, res) => {
 export const getAllUsers = async (req, res) => {
   try {
     const users = await UserModel.find().select("-passwordHash").exec();
-    const totalCount = await UserModel.countDocuments();
     res.json({
       data: users,
-      total: totalCount,
     });
   } catch (err) {
     console.error(err);
@@ -203,6 +201,7 @@ export const getUserById = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "Користувача не знайдено" });
     }
+    console.log("user", user);
     res.json(user);
   } catch (err) {
     console.error(err);
@@ -355,7 +354,9 @@ export const updateViewedPosts = async (req, res) => {
   const userId = req.params.id;
   const { viewedPostsArray } = req.body; // Це масив рядків, отриманий з клієнта
   if (!Array.isArray(viewedPostsArray)) {
-    return res.status(400).json({ message: "viewedPostsArray повинен бути масивом" });
+    return res
+      .status(400)
+      .json({ message: "viewedPostsArray повинен бути масивом" });
   }
 
   try {
@@ -425,9 +426,104 @@ export const updateViewedPosts = async (req, res) => {
   } catch (err) {
     console.error("Помилка при оновленні проглянутих постів:", err);
     // Обробка помилок парсингу ObjectId (наприклад, якщо client send 'invalid_id')
-    if (err.name === 'BSONTypeError' || err.name === 'CastError') {
-      return res.status(400).json({ message: "Один або декілька ID постів є недійсними." });
+    if (err.name === "BSONTypeError" || err.name === "CastError") {
+      return res
+        .status(400)
+        .json({ message: "Один або декілька ID постів є недійсними." });
     }
-    return res.status(500).json({ message: "Не вдалося оновити проглянуті пости.", error: err.message });
+    return res.status(500).json({
+      message: "Не вдалося оновити проглянуті пости.",
+      error: err.message,
+    });
   }
+};
+
+export const batchUpdateUsers = async (req, res) => {
+  const usersArr = req.body; // Это массив объектов пользователей от клиента
+
+  if (!Array.isArray(usersArr) || usersArr.length === 0) {
+    return res.status(400).json({
+      message: "Тело запроса должно быть непустым массивом пользователей.",
+      successUpdatedUsers: [],
+      failedUpdatedUsers: [],
+    });
+  }
+
+  const updatePromises = usersArr.map(async (userToUpdate) => {
+    try {
+      // Ключевой момент: id приходит как строка, Mongoose может ее сам конвертировать,
+      // но явное преобразование в ObjectId иногда полезно для строгости.
+      // Однако, для findByIdAndUpdate, обычно достаточно строки.
+      // Убедитесь, что _id существует в userToUpdate
+      if (!userToUpdate._id) {
+        throw new Error("Отсутствует _id для обновления пользователя");
+      }
+
+      // Если в client передаются поля, которые не должны быть обновлены или требуют особой обработки,
+      // создайте здесь объект 'updatePayload' из 'userToUpdate', исключив ненужное.
+      // Например, если passwordHash никогда не должен приходить от клиента для batchUpdateUsers:
+      const updatePayload = { ...userToUpdate };
+      delete updatePayload.passwordHash; // Никогда не обновляем пароль через пакетное обновление
+
+      const updatedUser = await UserModel.findByIdAndUpdate(
+        userToUpdate._id,
+        updatePayload, // Используем очищенный payload
+        { new: true }
+      )
+        .select("-passwordHash")
+        .exec();
+
+      if (!updatedUser) {
+        // Если пользователь не найден по ID
+        return {
+          status: "rejected",
+          value: {
+            _id: userToUpdate._id,
+            message: "Пользователь не найден на сервере.",
+          },
+        };
+      }
+
+      // Возвращаем обновленные данные пользователя для успешной обработки
+      return { status: "fulfilled", value: updatedUser.toJSON() }; // .toJSON() для чистого JS объекта
+    } catch (error) {
+      // Ловим любую ошибку, произошедшую при обновлении конкретного пользователя
+      console.error(
+        `Ошибка при обновлении пользователя с ID ${userToUpdate._id}:`,
+        error
+      );
+      return {
+        status: "rejected",
+        value: {
+          _id: userToUpdate._id,
+          message:
+            error.message ||
+            "Внутренняя ошибка сервера при обновлении пользователя.",
+        },
+      };
+    }
+  });
+
+  const results = await Promise.allSettled(updatePromises);
+
+  const successUpdatedUsers = [];
+  const failedUpdatedUsers = [];
+
+  // Обрабатываем результаты всех промисов
+  results.forEach((result) => {
+    if (result.status === "fulfilled") {
+      successUpdatedUsers.push(result.value);
+    } else {
+      failedUpdatedUsers.push(result.reason.value); // 'reason' содержит объект, который мы вернули при 'rejected'
+    }
+  });
+
+  // Отправляем ОДИН ответ клиенту с обобщенными результатами
+  const serverTimestamp = new Date(); // Текущее время на сервере для синхронизации
+  res.status(200).json({
+    message: "Пакетное обновление пользователей завершено.",
+    successUpdatedUsers: successUpdatedUsers,
+    failedUpdatedUsers: failedUpdatedUsers,
+    serverCurrentTimestamp: serverTimestamp.toISOString(), // Полезно для клиента
+  });
 };

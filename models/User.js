@@ -33,8 +33,8 @@ const UserSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["адміністратор", 1, 2, 3],
-      default: 1,
+      enum: ["адміністратор", "1", "2", "3"], // Заменил числа на строки, чтобы соответствовать вашей Realm-схеме
+      default: "1", // По умолчанию тоже строка
     },
     viewedPosts: [
       {
@@ -42,11 +42,25 @@ const UserSchema = new mongoose.Schema(
       },
     ],
     verificationToken: String,
-    resetPasswordToken: String, // Токен для сброса пароля
+    resetPasswordToken: String,
     resetPasswordExpires: Date,
+
+    // --- Добавляем объект для меток синхронизации ---
+    lastSyncTimes: {
+      type: new mongoose.Schema(
+        {
+          documents: { type: Date, default: null }, // Время последней синхронизации документов
+          notes: { type: Date, default: null }, // Время последней синхронизации заметок
+          users: { type: Date, default: null }, // Время последней синхронизации данных пользователей
+          // Добавьте здесь другие типы данных, которые вы хотите синхронизировать
+        },
+        { _id: false } // Важно: отключаем создание _id для вложенного объекта
+      ),
+      default: {}, // Инициализируем по умолчанию пустым объектом, если не указано
+    },
   },
   {
-    timestamps: true,
+    timestamps: true, // `createdAt` и `updatedAt` будут добавляться автоматически
   }
 );
 

@@ -10,6 +10,7 @@ import { handleValidationErrors, checkAuth } from "./utils/index.js";
 import {
   UserController,
   PostController,
+  DocController,
   PhoneNumberController,
 } from "./controllers/index.js";
 import { verifyAdminRole } from "./utils/verifyRole.js";
@@ -22,7 +23,7 @@ const api_key = process.env.API_KEY;
 const api_secret = process.env.API_SECRET;
 const latest_app_version = process.env.LATEST_APP_VERSION;
 const force_update_min_version = process.env.FORCE_UPDATE_MIN_VERSION;
-const update_url_android = process.env.UPDATE_URL_ANDROID
+const update_url_android = process.env.UPDATE_URL_ANDROID;
 
 mongoose
   .connect(
@@ -51,6 +52,20 @@ cloudinary.config({
   api_secret: api_secret || "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
 });
 
+app.get("/ping", (req, res) => {
+  try {
+    res.status(200).json({
+      message: "Сервер доступен",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Ошибка при проверке связи:", error);
+    res.status(500).json({
+      message: "Внутренняя ошибка сервера при проверке связи",
+      error: error.message,
+    });
+  }
+});
 app.post("/upload-avatar", checkAuth, async (req, res) => {
   try {
     if (!req.files || !req.files.avatar) {
@@ -80,8 +95,8 @@ app.post("/upload", checkAuth, (req, res) => {
       .json({ message: "Будь ласка, завантажте зображення." });
   }
 
-  const imageFile = req.files.image;
-  const imageUrl = `http://192.168.0.131:4000/uploads/${imageFile.name}`;
+  // const imageFile = req.files.image;
+  // const imageUrl = `http://192.168.0.131:4000/uploads/${imageFile.name}`;
 
   imageFile.mv(`./uploads/${imageFile.name}`, (err) => {
     if (err) {
@@ -98,8 +113,10 @@ app.get("/app_config", (req, res) => {
   try {
     const config = {
       latest_app_version: latest_app_version || "2.0.0",
-      force_update_min_version: force_update_min_version || "1.9.8",
-      update_url_android: update_url_android || "https://drive.google.com/uc?export=download&id=11X1g5k2V3nr85u-0ctrTKZYUrwPrLPxf",
+      force_update_min_version: force_update_min_version || "2.0.0",
+      update_url_android:
+        update_url_android ||
+        "https://drive.google.com/uc?export=download&id=11X1g5k2V3nr85u-0ctrTKZYUrwPrLPxf",
     };
 
     res.json(config);
@@ -129,6 +146,7 @@ app.post("/auth/reset-password:token", UserController.resetPassword);
 
 app.get("/users", checkAuth, UserController.getAllUsers);
 app.get("/users/:id", checkAuth, UserController.getUserById);
+app.patch("/users/batch-update", UserController.batchUpdateUsers);
 app.patch("/users/:id", checkAuth, UserController.updateUser);
 app.patch(
   "/users/:id/viewed-posts",
@@ -157,6 +175,12 @@ app.post(
 app.post("/posts/batch-create", checkAuth, PostController.batchCreate);
 app.post("/posts/batch-delete", checkAuth, PostController.batchDeletePosts);
 app.patch("/posts/batch-update", checkAuth, PostController.batchUpdatePosts);
+
+app.get("/docs/changes", DocController.getChanges);
+
+app.post("/docs/batch-create", DocController.batchCreate);
+app.post("/docs/batch-delete", DocController.batchDeleteDocs);
+app.patch("/docs/batch-update", DocController.batchUpdate);
 
 app.delete("/posts/:id", checkAuth, PostController.deletePost);
 app.patch(

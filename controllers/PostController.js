@@ -102,11 +102,12 @@ export const deletePost = async (req, res) => {
 
 export const create = async (req, res) => {
   try {
-    const { title, text, imageUrl, tags, type, resolved } = req.body;
+    const { title, text, imageUrl, tags, type, pech, resolved } = req.body;
     const userId = req.userId;
 
     const postData = {
       title,
+      pech,
       text,
       imageUrl,
       tags: tags.split(","),
@@ -141,7 +142,7 @@ export const update = async (req, res) => {
     if (!post) {
       return res.status(404).json({ message: "Стаття не знайдена" });
     }
-
+    console.log(req.body.tags);
     if (userRole === "адміністратор" || post.user._id.toString() === userId) {
       const updateData = {};
       if (req.body.hasOwnProperty("resolved")) {
@@ -157,7 +158,7 @@ export const update = async (req, res) => {
         updateData.imageUrl = req.body.imageUrl;
       }
       if (req.body.hasOwnProperty("tags")) {
-        updateData.tags = req.body.tags.split(",");
+        updateData.tags = req.body.tags;
       }
 
       if (Object.keys(updateData).length === 0) {
@@ -211,13 +212,9 @@ export const markPostAsViewed = async (req, res) => {
 
 export const getChanges = async (req, res) => {
   try {
-    // 1. Получаем дату последней синхронизации от клиента.
-    // Если 'since' не передан (первая синхронизация), используем начало эпохи.
-    const since = req.query.since ? new Date(req.query.since) : new Date(0);
-    // --- Запрос для постов, которые были СОЗДАНЫ ИЛИ ОБНОВЛЕНЫ ---
-    // Нам нужны посты, у которых:
-    // a) updatedAt >= since ИЛИ createdAt >= since (чтобы поймать новые и обновленные)
-    // b) isDeleted = false (мы не хотим возвращать удаленные посты как "обновленные")
+    const since = req.query.since
+      ? new Date(req.query.since)
+      : console.log("since не получен");
     const createdOrUpdatedPosts = await PostModel.find({
       $or: [
         { updatedAt: { $gte: since }, isDeleted: false }, // Обновленные и не удаленные
@@ -227,25 +224,25 @@ export const getChanges = async (req, res) => {
       .populate("user") // Если поле 'user' это ObjectId и вы хотите подтянуть данные пользователя
       .lean() // Преобразует Mongoose-документы в простые JavaScript-объекты для чистоты
       .exec();
-    
-      // Збираємо всі унікальні ID користувачів з отриманих постів
-  const allUserIdsInChanges = new Set();
-  createdOrUpdatedPosts.forEach(post => {
-    if (post.user && post.user._id) {
-      allUserIdsInChanges.add(post.user._id.toString());
-    }
-    if (Array.isArray(post.viewedByUsers)) {
-      post.viewedByUsers.forEach(userId => {
-        allUserIdsInChanges.add(userId.toString());
-      });
-    }
-  });
 
-  // Завантажуємо інформацію про цих користувачів
-  const referencedUsers = await User.find(
-    { _id: { $in: Array.from(allUserIdsInChanges) } },
-    "fullName" // Повертаємо тільки fullName та _id
-  ).lean();
+    // Збираємо всі унікальні ID користувачів з отриманих постів
+    const allUserIdsInChanges = new Set();
+    createdOrUpdatedPosts.forEach((post) => {
+      if (post.user && post.user._id) {
+        allUserIdsInChanges.add(post.user._id.toString());
+      }
+      if (Array.isArray(post.viewedByUsers)) {
+        post.viewedByUsers.forEach((userId) => {
+          allUserIdsInChanges.add(userId.toString());
+        });
+      }
+    });
+
+    // Завантажуємо інформацію про цих користувачів
+    const referencedUsers = await User.find(
+      { _id: { $in: Array.from(allUserIdsInChanges) } },
+      "fullName" // Повертаємо тільки fullName та _id
+    ).lean();
 
     // --- Запрос для ID постов, которые были УДАЛЕНЫ ---
     // Нам нужны _id постов, у которых:
@@ -283,44 +280,328 @@ export const getChanges = async (req, res) => {
   }
 };
 
+// export const batchCreate = async (req, res) => {
+//   const userId = req.userId;
+//   const itemsToProcess = Array.isArray(req.body) ? req.body : [];
+
+//   const postsToInsert = [];
+//   const finalResults = []; // Масив для зберігання результатів для кожного клієнтського елемента
+
+//   console.log(`Batch Create: Отримано ${itemsToProcess.length} елементів.`);
+
+//   if (itemsToProcess.length === 0) {
+//     console.log("Batch Create: Тіло запиту пусте або не є масивом.");
+//     return res.json([]);
+//   }
+
+//   // 1. Валідація та Перетворення вхідних даних
+//   itemsToProcess.forEach((itemData, index) => {
+//     const __localId = itemData?.__localId;
+
+//     if (!itemData || typeof itemData !== "object" || !__localId) {
+//       console.warn(
+//         "Batch Create: Пропущено елемент через неправильний формат або відсутність __localId:",
+//         itemData
+//       );
+//       finalResults.push({
+//         __localId: __localId || `index-${index}`,
+//         success: false,
+//         error: "Invalid item format or missing __localId",
+//       });
+//       return;
+//     }
+
+//     if (!itemData.title || !itemData.text) {
+//       console.warn(
+//         `Batch Create: Пропущено елемент ${__localId} через відсутність обов'язкових полів (title або text).`,
+//         itemData
+//       );
+//       finalResults.push({
+//         __localId: __localId,
+//         success: false,
+//         error: "Missing required fields (title or text)",
+//       });
+//       return;
+//     }
+
+//     try {
+//       const tagsArray = Array.isArray(itemData.tags)
+//         ? itemData.tags
+//             .map((tag) => String(tag).trim())
+//             .filter((tag) => tag.length > 0)
+//         : [];
+
+//       const postDocData = {
+//         __localId: itemData.__localId,
+//         title: itemData.title,
+//         text: itemData.text,
+//         tags: tagsArray,
+//         pech: itemData.pech,
+//         user: userId,
+//         type: itemData.type || "інформаційна",
+//         resolved: null, // Початкове значення
+//         imageUrl: itemData.imageUrl || null,
+//         viewedByUsers: itemData.viewedByUsers,
+//         // createdAt та updatedAt будуть встановлені Mongoose, якщо у схемі є timestamps: true
+//         // Якщо їх тут явно встановити, Mongoose їх ПЕРЕПИШЕ при збереженні.
+//         // Тому краще їх тут не вказувати, якщо ви покладаєтесь на timestamps: true
+//       };
+
+//       if (itemData.type === "аварійна") {
+//         postDocData.resolved = false;
+//       } else {
+//         // Якщо тип не "аварійна", і resolved присутній у вхідних даних, використовуємо його.
+//         // В іншому випадку, за замовчуванням false.
+//         postDocData.resolved =
+//           itemData.resolved !== undefined ? itemData.resolved : false;
+//       }
+
+//       postsToInsert.push(postDocData);
+//       // Додаємо попередній запис у результати для елементів, які пішли на вставку
+//       // Його статус буде оновлено пізніше.
+//       finalResults.push({
+//         __localId: __localId,
+//         success: false,
+//         error: "Processing...",
+//       });
+//     } catch (transformError) {
+//       console.error(
+//         `Batch Create: Помилка перетворення даних для елемента ${__localId}:`,
+//         transformError
+//       );
+//       finalResults.push({
+//         __localId: __localId,
+//         success: false,
+//         error: `Data transformation failed: ${transformError.message}`,
+//       });
+//     }
+//   });
+
+//   if (postsToInsert.length === 0) {
+//     console.log(
+//       "Batch Create: Немає валідних елементів для вставки після обробки."
+//     );
+//     return res.json(finalResults);
+//   }
+
+//   // 2. Виконання пакетної вставки в MongoDB (ТІЛЬКИ ОДИН РАЗ)
+//   try {
+//     const insertResult = await PostModel.insertMany(postsToInsert, {
+//       ordered: false,
+//     });
+//     console.log("insertResult", insertResult)
+//     // Лог показує, що insertResult є масивом документів.
+//     // Перевіримо це явно.
+//     let nInsertedCount = 0;
+//     let successfullyInsertedDocs = [];
+
+//     if (Array.isArray(insertResult)) {
+//       // Якщо insertResult є масивом (новий Mongoose / драйвер)
+//       nInsertedCount = insertResult.length;
+//       successfullyInsertedDocs = insertResult;
+//     } else if (
+//       insertResult &&
+//       insertResult.result &&
+//       typeof insertResult.result.nInserted === "number"
+//     ) {
+//       // Якщо insertResult є BulkWriteResult об'єктом зі старою структурою
+//       nInsertedCount = insertResult.result.nInserted;
+//       // У цьому випадку, успішні документи можуть бути в insertResult.ops
+//       // або ж їх потрібно буде отримувати за insertResult.insertedIds
+//       successfullyInsertedDocs = insertResult.ops || []; // insertResult.ops може бути присутнім
+//     } else {
+//       // Неочікуваний формат результату
+//       console.warn(
+//         "Batch Create: Неочікуваний формат результату insertMany:",
+//         insertResult
+//       );
+//     }
+
+//     // Оновлюємо результати на основі успішних вставок
+//     if (nInsertedCount > 0) {
+//       successfullyInsertedDocs.forEach((insertedDoc) => {
+//         const __localId = insertedDoc.__localId;
+//         if (__localId) {
+//           const resultEntry = finalResults.find((r) => r.__localId === __localId);
+//           if (resultEntry) {
+//             resultEntry.success = true;
+//             resultEntry.error = undefined;
+//             resultEntry.serverId = insertedDoc._id;
+//             resultEntry.updatedAt = insertedDoc.updatedAt; // Використовуємо updatedAt, якщо є
+//           } else {
+//             console.warn(
+//               "Batch Create: Не знайдено початкового запису в результатах для успішної вставки:",
+//               __localId,
+//               insertedDoc
+//             );
+//             finalResults.push({
+//               __localId: __localId,
+//               success: true,
+//               serverId: insertedDoc._id,
+//               updatedAt: insertedDoc.updatedAt,
+//               warning: "Result mapping issue",
+//             });
+//           }
+//         }
+//       });
+//     } else {
+//       console.log(
+//         `Batch Create: No documents successfully inserted (0 inserted).`
+//       );
+//     }
+
+//     console.log(
+//       `Batch Create: Успішно вставлено ${nInsertedCount} документів.`
+//     );
+//     return res.json(finalResults);
+//   } catch (error) {
+//     console.error("Batch Create: Помилка під час insertMany:", error);
+
+//     // Обробка error.insertedDocs та error.writeErrors залишається такою ж,
+//     // оскільки об'єкт помилки (MongoBulkWriteError) має ці властивості.
+
+//     // Оновлюємо результати для елементів, які були успішно вставлені (якщо такі є в error.insertedDocs)
+//     if (error.insertedDocs && Array.isArray(error.insertedDocs)) {
+//       error.insertedDocs.forEach((insertedDoc) => {
+//         const __localId = insertedDoc.__localId;
+//         if (__localId) {
+//           const resultEntry = finalResults.find((r) => r.__localId === __localId);
+//           if (resultEntry) {
+//             resultEntry.success = true;
+//             resultEntry.error = undefined;
+//             resultEntry.serverId = insertedDoc._id;
+//             resultEntry.updatedAt = insertedDoc.updatedAt;
+//           } else {
+//             console.warn(
+//               "Batch Create: Не знайдено початкового запису в результатах для успішної вставки (в catch):",
+//               __localId,
+//               insertedDoc
+//             );
+//             finalResults.push({
+//               __localId: __localId,
+//               success: true,
+//               serverId: insertedDoc._id,
+//               updatedAt: insertedDoc.updatedAt,
+//               warning: "Result mapping issue in catch",
+//             });
+//           }
+//         }
+//       });
+//     }
+
+//     // Обробляємо помилки для окремих елементів (якщо є writeErrors)
+//     if (error.writeErrors && Array.isArray(error.writeErrors)) {
+//       error.writeErrors.forEach((writeError) => {
+//         const failedItemIndex = writeError.index;
+//         if (
+//           failedItemIndex !== undefined &&
+//           failedItemIndex < postsToInsert.length
+//         ) {
+//           const failedItemData = postsToInsert[failedItemIndex];
+//           const __localId = failedItemData.__localId;
+
+//           if (__localId) {
+//             const resultEntry = finalResults.find((r) => r.__localId === __localId);
+//             if (resultEntry) {
+//               resultEntry.success = false;
+//               resultEntry.error = writeError.errmsg || "Insertion failed";
+//               resultEntry.serverId = undefined;
+//               resultEntry.updatedAt = undefined;
+//             } else {
+//               console.warn(
+//                 "Batch Create: Не знайдено початкового запису в результатах для елемента з writeError:",
+//                 __localId,
+//                 writeError
+//               );
+//               finalResults.push({
+//                 __localId: __localId,
+//                 success: false,
+//                 error:
+//                   writeError.errmsg || "Insertion failed (no initial entry)",
+//               });
+//             }
+//           } else {
+//             console.warn(
+//               "Batch Create: Елемент з writeError не має __localId після перетворення:",
+//               failedItemData,
+//               writeError
+//             );
+//             finalResults.push({
+//               success: false,
+//               error: `Insertion failed at index ${failedItemIndex}: ${
+//                 writeError.errmsg || "Unknown error"
+//               }`,
+//             });
+//           }
+//         }
+//       });
+//     } else {
+//       // Загальна помилка
+//       console.error("Batch Create: Загальна помилка insertMany:", error);
+//       postsToInsert.forEach((item) => {
+//         const __localId = item.__localId;
+//         if (__localId) {
+//           const resultEntry = finalResults.find((r) => r.__localId === __localId);
+//           if (
+//             resultEntry &&
+//             resultEntry.success === false &&
+//             resultEntry.error === "Processing..."
+//           ) {
+//             resultEntry.error = error.message || "Batch insertion failed";
+//           } else if (!resultEntry) {
+//             finalResults.push({
+//               __localId: __localId,
+//               success: false,
+//               error:
+//                 error.message ||
+//                 "Batch processing failed (missing initial entry)",
+//             });
+//           }
+//         }
+//       });
+//     }
+
+//     return res.status(500).json(finalResults);
+//   }
+// };
 export const batchCreate = async (req, res) => {
   const userId = req.userId;
   const itemsToProcess = Array.isArray(req.body) ? req.body : [];
 
   const postsToInsert = [];
-  const finalResults = []; // Масив для зберігання результатів для кожного клієнтського елемента
+  const finalResults = []; // Массив для хранения результатов для каждого клиентского элемента
 
-  console.log(`Batch Create: Отримано ${itemsToProcess.length} елементів.`);
+  console.log(`Batch Create: Получено ${itemsToProcess.length} элементов.`);
 
   if (itemsToProcess.length === 0) {
-    console.log("Batch Create: Тіло запиту пусте або не є масивом.");
+    console.log("Batch Create: Тело запроса пусто или не является массивом.");
     return res.json([]);
   }
 
-  // 1. Валідація та Перетворення вхідних даних
+  // 1. Валидация и Преобразование входных данных
   itemsToProcess.forEach((itemData, index) => {
-    const localId = itemData?.__localId;
+    const __localId = itemData?.__localId;
 
-    if (!itemData || typeof itemData !== "object" || !localId) {
+    if (!itemData || typeof itemData !== "object" || !__localId) {
       console.warn(
-        "Batch Create: Пропущено елемент через неправильний формат або відсутність localId:",
+        "Batch Create: Пропущен элемент из-за неправильного формата или отсутствия __localId:",
         itemData
       );
       finalResults.push({
-        localId: localId || `index-${index}`,
+        __localId: __localId || `index-${index}`,
         success: false,
-        error: "Invalid item format or missing localId",
+        error: "Invalid item format or missing __localId",
       });
       return;
     }
 
     if (!itemData.title || !itemData.text) {
       console.warn(
-        `Batch Create: Пропущено елемент ${localId} через відсутність обов'язкових полів (title або text).`,
+        `Batch Create: Пропущен элемент ${__localId} из-за отсутствия обязательных полей (title или text).`,
         itemData
       );
       finalResults.push({
-        localId: localId,
+        __localId: __localId,
         success: false,
         error: "Missing required fields (title or text)",
       });
@@ -339,40 +620,36 @@ export const batchCreate = async (req, res) => {
         title: itemData.title,
         text: itemData.text,
         tags: tagsArray,
+        pech: itemData.pech,
         user: userId,
         type: itemData.type || "інформаційна",
-        resolved: null, // Початкове значення
+        resolved: null,
         imageUrl: itemData.imageUrl || null,
-        viewedByUsers: itemData.viewedByUsers,
-        // createdAt та updatedAt будуть встановлені Mongoose, якщо у схемі є timestamps: true
-        // Якщо їх тут явно встановити, Mongoose їх ПЕРЕПИШЕ при збереженні.
-        // Тому краще їх тут не вказувати, якщо ви покладаєтесь на timestamps: true
+        viewedByUsers: itemData.viewedByUsers || [], // Убедитесь, что это массив, если схема ожидает
+        // createdAt и updatedAt будут установлены Mongoose, если у схемы есть timestamps: true
       };
 
       if (itemData.type === "аварійна") {
         postDocData.resolved = false;
       } else {
-        // Якщо тип не "аварійна", і resolved присутній у вхідних даних, використовуємо його.
-        // В іншому випадку, за замовчуванням false.
         postDocData.resolved =
           itemData.resolved !== undefined ? itemData.resolved : false;
       }
 
-      postsToInsert.push(postDocData);
-      // Додаємо попередній запис у результати для елементів, які пішли на вставку
-      // Його статус буде оновлено пізніше.
+      // Добавляем запись в finalResults как "Processing..."
       finalResults.push({
-        localId: localId,
+        __localId: __localId,
         success: false,
         error: "Processing...",
       });
+      postsToInsert.push(postDocData);
     } catch (transformError) {
       console.error(
-        `Batch Create: Помилка перетворення даних для елемента ${localId}:`,
+        `Batch Create: Ошибка преобразования данных для элемента ${__localId}:`,
         transformError
       );
       finalResults.push({
-        localId: localId,
+        __localId: __localId,
         success: false,
         error: `Data transformation failed: ${transformError.message}`,
       });
@@ -381,117 +658,91 @@ export const batchCreate = async (req, res) => {
 
   if (postsToInsert.length === 0) {
     console.log(
-      "Batch Create: Немає валідних елементів для вставки після обробки."
+      "Batch Create: Нет валидных элементов для вставки после обработки."
     );
-    return res.json(finalResults);
+    // Возвращаем результаты валидации, если нечего вставлять
+    return res.status(200).json({
+      successNewDocs: [],
+      failedNewDocs: finalResults.filter((r) => !r.success),
+    });
   }
 
-  // 2. Виконання пакетної вставки в MongoDB (ТІЛЬКИ ОДИН РАЗ)
+  // 2. Выполнение пакетной вставки в MongoDB
   try {
     const insertResult = await PostModel.insertMany(postsToInsert, {
-      ordered: false,
+      ordered: false, // Продолжаем вставлять другие документы, даже если один провалился
     });
 
-    // Лог показує, що insertResult є масивом документів.
-    // Перевіримо це явно.
-    let nInsertedCount = 0;
-    let successfullyInsertedDocs = [];
+    console.log("insertResult", insertResult);
 
-    if (Array.isArray(insertResult)) {
-      // Якщо insertResult є масивом (новий Mongoose / драйвер)
-      nInsertedCount = insertResult.length;
-      successfullyInsertedDocs = insertResult;
-    } else if (
-      insertResult &&
-      insertResult.result &&
-      typeof insertResult.result.nInserted === "number"
-    ) {
-      // Якщо insertResult є BulkWriteResult об'єктом зі старою структурою
-      nInsertedCount = insertResult.result.nInserted;
-      // У цьому випадку, успішні документи можуть бути в insertResult.ops
-      // або ж їх потрібно буде отримувати за insertResult.insertedIds
-      successfullyInsertedDocs = insertResult.ops || []; // insertResult.ops може бути присутнім
-    } else {
-      // Неочікуваний формат результату
-      console.warn(
-        "Batch Create: Неочікуваний формат результату insertMany:",
-        insertResult
-      );
-    }
-
-    // Оновлюємо результати на основі успішних вставок
-    if (nInsertedCount > 0) {
-      successfullyInsertedDocs.forEach((insertedDoc) => {
-        const localId = insertedDoc.__localId;
-        if (localId) {
-          const resultEntry = finalResults.find((r) => r.localId === localId);
-          if (resultEntry) {
-            resultEntry.success = true;
-            resultEntry.error = undefined;
-            resultEntry.serverId = insertedDoc._id;
-            resultEntry.updatedAt = insertedDoc.updatedAt; // Використовуємо updatedAt, якщо є
-          } else {
-            console.warn(
-              "Batch Create: Не знайдено початкового запису в результатах для успішної вставки:",
-              localId,
-              insertedDoc
-            );
-            finalResults.push({
-              localId: localId,
-              success: true,
-              serverId: insertedDoc._id,
-              updatedAt: insertedDoc.updatedAt,
-              warning: "Result mapping issue",
-            });
-          }
+    // В случае полного успеха insertMany, `insertResult` будет массивом созданных документов Mongoose.
+    // Если есть частичные ошибки, то управление перейдёт в блок catch.
+    // Поэтому здесь мы предполагаем, что все документы из postsToInsert были успешно вставлены.
+    insertResult.forEach((insertedDoc) => {
+      const __localId = insertedDoc.__localId;
+      if (__localId) {
+        const resultEntry = finalResults.find((r) => r.__localId === __localId);
+        if (resultEntry) {
+          resultEntry.success = true;
+          resultEntry.error = undefined; // Очищаем ошибку "Processing..."
+          resultEntry.serverId = insertedDoc._id; // Важно: serverId от MongoDB
+          resultEntry.updatedAt = insertedDoc.updatedAt;
         }
-      });
-    } else {
-      console.log(
-        `Batch Create: No documents successfully inserted (0 inserted).`
-      );
-    }
+      }
+    });
 
     console.log(
-      `Batch Create: Успішно вставлено ${nInsertedCount} документів.`
+      `Batch Create: Успешно вставлено ${insertResult.length} документов.`
     );
-    return res.json(finalResults);
+    // Отфильтруйте успешные и неуспешные элементы для ответа клиенту
+    const successNewDocs = finalResults
+      .filter((r) => r.success)
+      .map((r) => ({
+        __localId: r.__localId,
+        _id: r.serverId,
+        updatedAt: r.updatedAt,
+      }));
+    const failedNewDocs = finalResults
+      .filter((r) => !r.success)
+      .map((r) => ({
+        __localId: r.__localId,
+        message: r.error,
+      }));
+
+    return res.status(200).json({ successNewDocs, failedNewDocs });
   } catch (error) {
-    console.error("Batch Create: Помилка під час insertMany:", error);
+    // В случае MongoBulkWriteError (если ordered: false и есть ошибки),
+    // error.insertedDocs будет содержать успешно вставленные, а error.writeErrors - проваленные.
 
-    // Обробка error.insertedDocs та error.writeErrors залишається такою ж,
-    // оскільки об'єкт помилки (MongoBulkWriteError) має ці властивості.
+    console.error("Batch Create: Ошибка при пакетной вставке:", error);
 
-    // Оновлюємо результати для елементів, які були успішно вставлені (якщо такі є в error.insertedDocs)
+    // Сначала помечаем все, что еще "Processing...", как проваленные с общей ошибкой
+    finalResults.forEach((r) => {
+      if (r.error === "Processing...") {
+        r.success = false;
+        r.error = error.message || "Batch insertion failed";
+      }
+    });
+
+    // Обновляем результаты для документов, которые *были* успешно вставлены (несмотря на другие ошибки)
     if (error.insertedDocs && Array.isArray(error.insertedDocs)) {
       error.insertedDocs.forEach((insertedDoc) => {
-        const localId = insertedDoc.__localId;
-        if (localId) {
-          const resultEntry = finalResults.find((r) => r.localId === localId);
+        const __localId = insertedDoc.__localId;
+        if (__localId) {
+          const resultEntry = finalResults.find(
+            (r) => r.__localId === __localId
+          );
           if (resultEntry) {
             resultEntry.success = true;
             resultEntry.error = undefined;
             resultEntry.serverId = insertedDoc._id;
             resultEntry.updatedAt = insertedDoc.updatedAt;
-          } else {
-            console.warn(
-              "Batch Create: Не знайдено початкового запису в результатах для успішної вставки (в catch):",
-              localId,
-              insertedDoc
-            );
-            finalResults.push({
-              localId: localId,
-              success: true,
-              serverId: insertedDoc._id,
-              updatedAt: insertedDoc.updatedAt,
-              warning: "Result mapping issue in catch",
-            });
           }
         }
       });
     }
 
-    // Обробляємо помилки для окремих елементів (якщо є writeErrors)
+    // Обновляем результаты для документов, которые провалились из-за конкретных writeErrors
     if (error.writeErrors && Array.isArray(error.writeErrors)) {
       error.writeErrors.forEach((writeError) => {
         const failedItemIndex = writeError.index;
@@ -500,72 +751,42 @@ export const batchCreate = async (req, res) => {
           failedItemIndex < postsToInsert.length
         ) {
           const failedItemData = postsToInsert[failedItemIndex];
-          const localId = failedItemData.__localId;
+          const __localId = failedItemData.__localId;
+          const resultEntry = finalResults.find(
+            (r) => r.__localId === __localId
+          );
 
-          if (localId) {
-            const resultEntry = finalResults.find((r) => r.localId === localId);
-            if (resultEntry) {
-              resultEntry.success = false;
-              resultEntry.error = writeError.errmsg || "Insertion failed";
-              resultEntry.serverId = undefined;
-              resultEntry.updatedAt = undefined;
-            } else {
-              console.warn(
-                "Batch Create: Не знайдено початкового запису в результатах для елемента з writeError:",
-                localId,
-                writeError
-              );
-              finalResults.push({
-                localId: localId,
-                success: false,
-                error:
-                  writeError.errmsg || "Insertion failed (no initial entry)",
-              });
-            }
-          } else {
-            console.warn(
-              "Batch Create: Елемент з writeError не має localId після перетворення:",
-              failedItemData,
-              writeError
-            );
-            finalResults.push({
-              success: false,
-              error: `Insertion failed at index ${failedItemIndex}: ${
-                writeError.errmsg || "Unknown error"
-              }`,
-            });
-          }
-        }
-      });
-    } else {
-      // Загальна помилка
-      console.error("Batch Create: Загальна помилка insertMany:", error);
-      postsToInsert.forEach((item) => {
-        const localId = item.__localId;
-        if (localId) {
-          const resultEntry = finalResults.find((r) => r.localId === localId);
-          if (
-            resultEntry &&
-            resultEntry.success === false &&
-            resultEntry.error === "Processing..."
-          ) {
-            resultEntry.error = error.message || "Batch insertion failed";
-          } else if (!resultEntry) {
-            finalResults.push({
-              localId: localId,
-              success: false,
-              error:
-                error.message ||
-                "Batch processing failed (missing initial entry)",
-            });
+          if (resultEntry) {
+            resultEntry.success = false;
+            resultEntry.error = writeError.errmsg || "Insertion failed";
+            resultEntry.serverId = undefined;
+            resultEntry.updatedAt = undefined;
           }
         }
       });
     }
 
-    return res.status(500).json(finalResults);
+    // Формируем финальный ответ клиенту
+    const successNewDocs = finalResults
+      .filter((r) => r.success)
+      .map((r) => ({
+        __localId: r.__localId,
+        _id: r.serverId,
+        updatedAt: r.updatedAt,
+      }));
+    const failedNewDocs = finalResults
+      .filter((r) => !r.success)
+      .map((r) => ({
+        __localId: r.__localId,
+        message: r.error,
+      }));
+
+    // Возвращаем 200 OK, даже если есть failedNewDocs, чтобы клиент мог их обработать.
+    // Или 207 Multi-Status, если вы хотите явно указать на частичный успех/неудачу.
+    return res.status(200).json({ successNewDocs, failedNewDocs });
   }
 };
+
 export const batchUpdatePosts = async (req, res) => {
   const updates = req.body; // Ожидаем массив объектов обновлений
   if (!Array.isArray(updates) || updates.length === 0) {
@@ -656,6 +877,7 @@ export const batchUpdatePosts = async (req, res) => {
     });
   }
 };
+
 export const batchDeletePosts = async (req, res) => {
   console.log(
     "Batch Delete: Получен запрос на пакетное МЯГКОЕ удаление постов."
