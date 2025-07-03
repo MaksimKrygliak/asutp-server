@@ -3,10 +3,10 @@ import mongoose from "mongoose";
 // Определяем SubDocumentMongooseSchema прямо здесь
 const SubDocumentMongooseSchema = new mongoose.Schema(
   {
-    _id: {
-      type: mongoose.Schema.Types.ObjectId,
-      default: () => new mongoose.Types.ObjectId(),
-    },
+    // _id: {
+    //   type: mongoose.Schema.Types.ObjectId,
+    //   default: () => new mongoose.Types.ObjectId(),
+    // },
     equipment: { type: String, required: false },
     Path: { type: String, required: false },
     Name: { type: String, required: false },
@@ -24,7 +24,7 @@ const DocSchema = new mongoose.Schema(
       required: true,
     },
     idDoc: {
-      type: String,
+      type: Number,
       unique: true,
       sparse: true,
     },

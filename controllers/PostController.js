@@ -821,8 +821,6 @@ export const batchUpdatePosts = async (req, res) => {
     }
 
     try {
-      // Здесь можно добавить проверку прав доступа (например, только владелец поста может его обновить)
-      // В данном примере, просто ищем и обновляем.
       const updatedPost = await PostModel.findByIdAndUpdate(
         _id,
         {

@@ -6,9 +6,8 @@ import { DateTime } from "luxon";
 export const batchCreate = async (req, res) => {
   const itemsToProcess = Array.isArray(req.body) ? req.body : [];
   const docsToInsert = [];
-  const initialClientResultsMap = new Map(); // Карта для сопоставления __localId с результатом для клиента
+  const initialClientResultsMap = new Map();
 
-  // Инициализация списков результатов
   const successNewDocs = [];
   const failedNewDocs = [];
 
@@ -16,7 +15,8 @@ export const batchCreate = async (req, res) => {
     console.log("Batch Create: Тело запроса пустое или не является массивом.");
     return res.json({ successNewDocs: [], failedNewDocs: [] });
   }
-  // 1. Предварительная обработка и валидация
+
+  // 1. Предварительная обработка и валидация входящих данных
   itemsToProcess.forEach((itemData) => {
     let localIdStr;
     let UserIdStr;
@@ -30,20 +30,20 @@ export const batchCreate = async (req, res) => {
           UserIdStr = itemData.user;
         } else {
           throw new Error(
-            `Invalid __localId format: ${itemData.__localId} or ${itemData.user}`
+            `Неверный формат __localId: ${itemData.__localId} или user: ${itemData.user}`
           );
         }
       } else {
-        throw new Error("Missing __localId");
+        throw new Error("Отсутствует __localId или user");
       }
     } catch (e) {
       const errorEntry = {
         __localId: itemData?.__localId || "unknown",
         user: itemData?.user || "unknown",
-        message: `Validation error: ${e.message}`,
+        message: `Ошибка валидации: ${e.message}`,
       };
       failedNewDocs.push(errorEntry);
-      return; // Пропускаем этот элемент
+      return; // Пропускаем этот элемент, если валидация не удалась
     }
 
     try {
@@ -56,6 +56,7 @@ export const batchCreate = async (req, res) => {
             NameImg: subDoc.NameImg,
           }))
         : [];
+
       const DocData = {
         __localId: new mongoose.Types.ObjectId(localIdStr), // Сохраняем как ObjectId в MongoDB
         idDoc: itemData.idDoc,
@@ -66,12 +67,14 @@ export const batchCreate = async (req, res) => {
         isPendingDeletion: itemData.isPendingDeletion || false,
         user: new mongoose.Types.ObjectId(UserIdStr),
         documents: documentsArray,
-        createdAt: itemData.createdAt
-          ? new Date(itemData.createdAt)
-          : new Date(),
-        updatedAt: itemData.updatedAt
-          ? new Date(itemData.updatedAt)
-          : new Date(),
+        // createdAt: itemData.createdAt
+        //   ? new Date(itemData.createdAt)
+        //   : new Date(),
+        // updatedAt: itemData.updatedAt
+        //   ? new Date(itemData.updatedAt)
+        //   : new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
         synced: true, // Помечаем как синхронизированный на сервере
         syncError: null,
       };
@@ -83,7 +86,7 @@ export const batchCreate = async (req, res) => {
         _id: null, // Будет заполнен при успешной вставке
         createdAt: null,
         updatedAt: null,
-        message: "Processing...",
+        message: "Processing...", // Временное сообщение
       });
     } catch (transformError) {
       console.error(
@@ -92,7 +95,7 @@ export const batchCreate = async (req, res) => {
       );
       failedNewDocs.push({
         __localId: localIdStr,
-        message: `Data transformation failed: ${transformError.message}`,
+        message: `Ошибка преобразования данных: ${transformError.message}`,
       });
     }
   });
@@ -123,11 +126,10 @@ export const batchCreate = async (req, res) => {
           clientResult._id = insertedDoc._id.toHexString(); // Преобразуем серверный ID в строку
           clientResult.createdAt = insertedDoc.createdAt;
           clientResult.updatedAt = insertedDoc.updatedAt;
-          clientResult.message = undefined; // Убираем сообщение "Processing..."
+          clientResult.message = undefined; // Убираем временное сообщение
           successNewDocs.push(clientResult);
           initialClientResultsMap.delete(localIdString); // Удаляем из карты успешный
         } else {
-          // Это не должно произойти, если initialClientResultsMap был правильно заполнен
           console.warn(
             "Batch Create: Успешно вставлен документ, но его __localId не найден в initialClientResultsMap:",
             localIdString
@@ -137,20 +139,21 @@ export const batchCreate = async (req, res) => {
             _id: insertedDoc._id.toHexString(),
             createdAt: insertedDoc.createdAt,
             updatedAt: insertedDoc.updatedAt,
-            message: "Successfully inserted, but initial mapping issue",
+            message:
+              "Успешно вставлено, но возникла проблема с начальным сопоставлением",
           });
         }
       });
     }
 
     // Все, что осталось в initialClientResultsMap, считается неудачным (например, из-за дубликата __localId)
+    // Это обрабатывается в catch блоке для writeErrors, но как запасной вариант:
     initialClientResultsMap.forEach((value) => {
       if (value.message === "Processing...") {
-        // Если статус не был обновлен
         failedNewDocs.push({
           __localId: value.__localId,
           message:
-            "Insertion failed (unknown reason, possibly duplicate __localId or other DB error)",
+            "Вставка не удалась (неизвестная причина, возможно, дубликат __localId или другая ошибка БД)",
         });
       }
     });
@@ -166,35 +169,101 @@ export const batchCreate = async (req, res) => {
   } catch (error) {
     console.error("Batch Create: Общая ошибка при insertMany:", error);
 
-    // Добавляем все оставшиеся элементы из initialClientResultsMap в failedNewDocs
-    initialClientResultsMap.forEach((value) => {
-      if (value.message === "Processing...") {
-        failedNewDocs.push({
-          __localId: value.__localId,
-          message: error.message || "Batch insertion failed (general error)",
-        });
-      }
-    });
+    // Временная карта для отслеживания, какие localId уже обработаны в этом блоке
+    const processedLocalIdsInCatch = new Set();
 
-    // Обрабатываем ошибки для отдельных элементов (если есть writeErrors, например, дубликаты)
+    // 1. Обработка специфических ошибок из writeErrors (если есть)
     if (error.writeErrors && Array.isArray(error.writeErrors)) {
+      console.log("2222222 - Обработка writeErrors: Начало");
       error.writeErrors.forEach((writeError) => {
+        const errorCode = writeError.err ? writeError.err.code : null;
+        const errorMessageFromDb = writeError.err
+          ? writeError.err.errmsg
+          : "Неизвестная ошибка БД.";
+
+        console.log(
+          `DEBUG: writeError.index: ${writeError.index}, code: ${errorCode}, errmsg: ${errorMessageFromDb}`
+        );
+
         const failedItemData = docsToInsert[writeError.index];
         if (failedItemData && failedItemData.__localId) {
           const localIdString = failedItemData.__localId.toHexString();
-          // Проверяем, не был ли этот элемент уже обработан как успешный
-          if (!successNewDocs.some((doc) => doc.__localId === localIdString)) {
-            // Добавляем в failedNewDocs, если его там еще нет
-            if (!failedNewDocs.some((doc) => doc.__localId === localIdString)) {
-              failedNewDocs.push({
-                __localId: localIdString,
-                message: writeError.errmsg || "Insertion failed",
-              });
+
+          // Гарантируем, что добавляем только один раз
+          if (
+            !processedLocalIdsInCatch.has(localIdString) &&
+            !successNewDocs.some((doc) => doc.__localId === localIdString)
+          ) {
+            // Убедимся, что не успех
+
+            let finalErrorMessage = errorMessageFromDb;
+            let duplicateId = null;
+
+            if (errorCode === 11000) {
+              console.log("DEBUG: Код ошибки 11000 обнаружен.");
+              const match = errorMessageFromDb.match(
+                /dup key: \{ idDoc: (\d+) \}/
+              );
+              if (match && match[1]) {
+                duplicateId = parseInt(match[1], 10);
+                console.log("DEBUG: Найден дубликат ID:", duplicateId);
+                finalErrorMessage = `Документ із ID ${duplicateId} вже існує. Будь ласка, використовуйте інший ID.`;
+              } else {
+                finalErrorMessage =
+                  "Документ із таким ID вже існує. Будь ласка, використовуйте інший ID.";
+              }
             }
+            // else if (errorCode === 121) { /* Валидация схемы */ } и т.д.
+
+            failedNewDocs.push({
+              __localId: localIdString,
+              message: finalErrorMessage,
+              duplicateIdDoc: duplicateId,
+            });
+            processedLocalIdsInCatch.add(localIdString); // Отмечаем как обработанный в этом блоке
+            console.log(
+              `DEBUG: Добавлен в failedNewDocs: ${localIdString}, message: "${finalErrorMessage}"`
+            );
+
+            // Удаляем из initialClientResultsMap, так как мы его уже обработали
+            if (initialClientResultsMap.has(localIdString)) {
+              initialClientResultsMap.delete(localIdString);
+            }
+          } else {
+            console.log(
+              `DEBUG: Документ ${localIdString} уже обработан или был успешен.`
+            );
           }
+        } else {
+          console.log(
+            `DEBUG: failedItemData или __localId отсутствуют для writeError.index ${writeError.index}`
+          );
         }
       });
+      console.log("2222222 - Обработка writeErrors: Конец");
     }
+
+    // 2. Обработка оставшихся элементов из initialClientResultsMap
+    // Эти элементы не были вставлены успешно И не имели специфической writeError
+    initialClientResultsMap.forEach((value, localIdString) => {
+      // Если этот элемент еще не был добавлен в failedNewDocs (например, в writeErrors выше)
+      if (!processedLocalIdsInCatch.has(localIdString)) {
+        failedNewDocs.push({
+          __localId: localIdString,
+          message:
+            error.message ||
+            "Пакетная вставка не удалась (общая ошибка сервера).",
+        });
+        processedLocalIdsInCatch.add(localIdString); // Отмечаем как обработанный
+      }
+    });
+
+    console.log(
+      `Batch Create: Окончательно успешно вставлено ${successNewDocs.length} документов.`
+    );
+    console.log(
+      `Batch Create: Окончательно ошибок при вставке ${failedNewDocs.length} документов.`
+    );
 
     return res.status(500).json({ successNewDocs, failedNewDocs });
   }
@@ -314,6 +383,8 @@ export const batchDeleteDocs = async (req, res) => {
   }
 
   try {
+    const nowTimestamp = Date.now(); // Текущий таймстемп в миллисекундах
+    const deletedIdValue = -nowTimestamp; // Отрицательный таймстемп
     const result = await DocModel.updateMany(
       {
         _id: { $in: objectIdsToSoftDelete },
@@ -323,13 +394,11 @@ export const batchDeleteDocs = async (req, res) => {
         {
           $set: {
             isPendingDeletion: true,
-            idDoc: {
-              $concat: ["$idDoc", " Удалено", `${new Date()}`]
-            },
+            idDoc: deletedIdValue,
             deletedAt: new Date(),
             updatedAt: new Date(), // Важно: Обновляем updatedAt, чтобы getChanges это "увидел"
           },
-        }
+        },
       ]
     );
     if (result.modifiedCount > 0) {
@@ -368,7 +437,9 @@ export const batchDeleteDocs = async (req, res) => {
 
 export const getChanges = async (req, res) => {
   try {
-    const since = req.query.since ? new Date(req.query.since) : console.log("since не получен");
+    const since = req.query.since
+      ? new Date(req.query.since)
+      : console.log("since не получен");
     const createdOrUpdatedDocs = await DocModel.find({
       $or: [
         { updatedAt: { $gte: since }, isDeleted: false }, // Обновленные и не удаленные
