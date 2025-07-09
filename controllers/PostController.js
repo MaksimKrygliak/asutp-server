@@ -280,7 +280,6 @@ export const getChanges = async (req, res) => {
   }
 };
 
-// export const batchCreate = async (req, res) => {
 //   const userId = req.userId;
 //   const itemsToProcess = Array.isArray(req.body) ? req.body : [];
 
@@ -789,6 +788,7 @@ export const batchCreate = async (req, res) => {
 
 export const batchUpdatePosts = async (req, res) => {
   const updates = req.body; // Ожидаем массив объектов обновлений
+  console.log("111!!!", updates)
   if (!Array.isArray(updates) || updates.length === 0) {
     return res
       .status(400)

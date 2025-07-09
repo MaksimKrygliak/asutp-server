@@ -383,8 +383,8 @@ export const batchDeleteDocs = async (req, res) => {
   }
 
   try {
-    const nowTimestamp = Date.now(); // Текущий таймстемп в миллисекундах
-    const deletedIdValue = -nowTimestamp; // Отрицательный таймстемп
+    // const nowTimestamp = Date.now();
+    // const deletedIdValue = -nowTimestamp;
     const result = await DocModel.updateMany(
       {
         _id: { $in: objectIdsToSoftDelete },
@@ -394,7 +394,7 @@ export const batchDeleteDocs = async (req, res) => {
         {
           $set: {
             isPendingDeletion: true,
-            idDoc: deletedIdValue,
+            // idDoc: deletedIdValue,
             deletedAt: new Date(),
             updatedAt: new Date(), // Важно: Обновляем updatedAt, чтобы getChanges это "увидел"
           },
@@ -423,15 +423,15 @@ export const batchDeleteDocs = async (req, res) => {
     } else {
       return res.status(200).json({
         success: true,
-        message: `Successfully soft deleted ${result.modifiedCount} posts.`,
+        message: `Successfully soft deleted ${result.modifiedCount} docs.`,
         successIds,
       });
     }
   } catch (error) {
-    console.error("Ошибка при пакетном мягком удалении постов:", error);
+    console.error("Ошибка при пакетном мягком удалении документов:", error);
     return res
       .status(500)
-      .json({ message: "Ошибка сервера при пакетном мягком удалении постов." });
+      .json({ message: "Ошибка сервера при пакетном мягком удалении документов." });
   }
 };
 
