@@ -164,7 +164,6 @@ export const login = async (req, res) => {
 export const getMe = async (req, res) => {
   try {
     const user = await UserModel.findById(req.userId);
-
     if (!user) {
       return res.status(404).json({ message: "Пользователь не найден." });
     }
@@ -451,30 +450,18 @@ export const batchUpdateUsers = async (req, res) => {
 
   const updatePromises = usersArr.map(async (userToUpdate) => {
     try {
-      // Ключевой момент: id приходит как строка, Mongoose может ее сам конвертировать,
-      // но явное преобразование в ObjectId иногда полезно для строгости.
-      // Однако, для findByIdAndUpdate, обычно достаточно строки.
-      // Убедитесь, что _id существует в userToUpdate
       if (!userToUpdate._id) {
         throw new Error("Отсутствует _id для обновления пользователя");
       }
 
-      // Если в client передаются поля, которые не должны быть обновлены или требуют особой обработки,
-      // создайте здесь объект 'updatePayload' из 'userToUpdate', исключив ненужное.
-      // Например, если passwordHash никогда не должен приходить от клиента для batchUpdateUsers:
       const updatePayload = { ...userToUpdate };
-      delete updatePayload.passwordHash; // Никогда не обновляем пароль через пакетное обновление
+      delete updatePayload.passwordHash;
 
-      const updatedUser = await UserModel.findByIdAndUpdate(
-        userToUpdate._id,
-        updatePayload, // Используем очищенный payload
-        { new: true }
-      )
-        .select("-passwordHash")
-        .exec();
+      // Получаем текущего пользователя из БД, чтобы обновить только нужные поля
+      // и затем обновить lastSyncTimes
+      const existingUser = await UserModel.findById(userToUpdate._id);
 
-      if (!updatedUser) {
-        // Если пользователь не найден по ID
+      if (!existingUser) {
         return {
           status: "rejected",
           value: {
@@ -484,10 +471,30 @@ export const batchUpdateUsers = async (req, res) => {
         };
       }
 
+      // Применяем пришедшие от клиента обновления к существующему пользователю
+      // Исключаем _id, createdAt, updatedAt, и lastSyncTimes, так как они обрабатываются отдельно или самим Mongoose
+      for (const key in updatePayload) {
+        if (key !== '_id' && key !== 'createdAt' && key !== 'updatedAt' && key !== 'lastSyncTimes') {
+            existingUser[key] = updatePayload[key];
+        }
+      }
+
+      // --- ВАЖНОЕ ИСПРАВЛЕНИЕ: Обновляем lastSyncTimes.users на текущее время на сервере ---
+      // Если lastSyncTimes существует, обновляем только users, иначе создаем объект
+      if (!existingUser.lastSyncTimes) {
+          existingUser.lastSyncTimes = {};
+      }
+      existingUser.lastSyncTimes.users = new Date(); // Устанавливаем текущее время на сервере
+      // Вы также можете рассмотреть обновление documents и notes здесь,
+      // если этот endpoint отвечает за их синхронизацию, а не только за users
+      // Например, если client.synced === false, значит он отправил изменения,
+      // и теперь все эти поля должны быть обновлены на текущее время.
+
+      const updatedUser = await existingUser.save(); // Сохраняем изменения
+
       // Возвращаем обновленные данные пользователя для успешной обработки
-      return { status: "fulfilled", value: updatedUser.toJSON() }; // .toJSON() для чистого JS объекта
+      return { status: "fulfilled", value: updatedUser.toJSON() };
     } catch (error) {
-      // Ловим любую ошибку, произошедшую при обновлении конкретного пользователя
       console.error(
         `Ошибка при обновлении пользователя с ID ${userToUpdate._id}:`,
         error
@@ -509,21 +516,109 @@ export const batchUpdateUsers = async (req, res) => {
   const successUpdatedUsers = [];
   const failedUpdatedUsers = [];
 
-  // Обрабатываем результаты всех промисов
   results.forEach((result) => {
     if (result.status === "fulfilled") {
       successUpdatedUsers.push(result.value);
     } else {
-      failedUpdatedUsers.push(result.reason.value); // 'reason' содержит объект, который мы вернули при 'rejected'
+      failedUpdatedUsers.push(result.reason.value);
     }
   });
 
-  // Отправляем ОДИН ответ клиенту с обобщенными результатами
-  const serverTimestamp = new Date(); // Текущее время на сервере для синхронизации
+  const serverTimestamp = new Date();
   res.status(200).json({
     message: "Пакетное обновление пользователей завершено.",
     successUpdatedUsers: successUpdatedUsers,
     failedUpdatedUsers: failedUpdatedUsers,
-    serverCurrentTimestamp: serverTimestamp.toISOString(), // Полезно для клиента
+    serverCurrentTimestamp: serverTimestamp.toISOString(),
   });
 };
+
+// export const batchUpdateUsers = async (req, res) => {
+//   const usersArr = req.body; // Это массив объектов пользователей от клиента
+
+//   if (!Array.isArray(usersArr) || usersArr.length === 0) {
+//     return res.status(400).json({
+//       message: "Тело запроса должно быть непустым массивом пользователей.",
+//       successUpdatedUsers: [],
+//       failedUpdatedUsers: [],
+//     });
+//   }
+
+//   const updatePromises = usersArr.map(async (userToUpdate) => {
+//     try {
+//       // Ключевой момент: id приходит как строка, Mongoose может ее сам конвертировать,
+//       // но явное преобразование в ObjectId иногда полезно для строгости.
+//       // Однако, для findByIdAndUpdate, обычно достаточно строки.
+//       // Убедитесь, что _id существует в userToUpdate
+//       if (!userToUpdate._id) {
+//         throw new Error("Отсутствует _id для обновления пользователя");
+//       }
+
+//       // Если в client передаются поля, которые не должны быть обновлены или требуют особой обработки,
+//       // создайте здесь объект 'updatePayload' из 'userToUpdate', исключив ненужное.
+//       // Например, если passwordHash никогда не должен приходить от клиента для batchUpdateUsers:
+//       const updatePayload = { ...userToUpdate };
+//       delete updatePayload.passwordHash; // Никогда не обновляем пароль через пакетное обновление
+
+//       const updatedUser = await UserModel.findByIdAndUpdate(
+//         userToUpdate._id,
+//         updatePayload, // Используем очищенный payload
+//         { new: true }
+//       )
+//         .select("-passwordHash")
+//         .exec();
+
+//       if (!updatedUser) {
+//         // Если пользователь не найден по ID
+//         return {
+//           status: "rejected",
+//           value: {
+//             _id: userToUpdate._id,
+//             message: "Пользователь не найден на сервере.",
+//           },
+//         };
+//       }
+
+//       // Возвращаем обновленные данные пользователя для успешной обработки
+//       return { status: "fulfilled", value: updatedUser.toJSON() }; // .toJSON() для чистого JS объекта
+//     } catch (error) {
+//       // Ловим любую ошибку, произошедшую при обновлении конкретного пользователя
+//       console.error(
+//         `Ошибка при обновлении пользователя с ID ${userToUpdate._id}:`,
+//         error
+//       );
+//       return {
+//         status: "rejected",
+//         value: {
+//           _id: userToUpdate._id,
+//           message:
+//             error.message ||
+//             "Внутренняя ошибка сервера при обновлении пользователя.",
+//         },
+//       };
+//     }
+//   });
+
+//   const results = await Promise.allSettled(updatePromises);
+
+//   const successUpdatedUsers = [];
+//   const failedUpdatedUsers = [];
+
+//   // Обрабатываем результаты всех промисов
+//   results.forEach((result) => {
+//     if (result.status === "fulfilled") {
+//       successUpdatedUsers.push(result.value);
+//     } else {
+//       failedUpdatedUsers.push(result.reason.value); // 'reason' содержит объект, который мы вернули при 'rejected'
+//     }
+//   });
+
+//   // Отправляем ОДИН ответ клиенту с обобщенными результатами
+//   const serverTimestamp = new Date(); // Текущее время на сервере для синхронизации
+//   res.status(200).json({
+//     message: "Пакетное обновление пользователей завершено.",
+//     successUpdatedUsers: successUpdatedUsers,
+//     failedUpdatedUsers: failedUpdatedUsers,
+//     serverCurrentTimestamp: serverTimestamp.toISOString(), // Полезно для клиента
+//   });
+// };
