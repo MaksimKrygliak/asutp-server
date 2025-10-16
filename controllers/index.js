@@ -1,0 +1,11 @@
+export * as UserController from './UserController.js';
+export * as PostController from './PostController.js';
+export * as DocController from './DocController.js';
+export * as PhoneNumberController from './PhoneNumberController.js';
+export * as UploadController from './UploadController.js';
+export * as SectionController from './SectionController.js';
+export * as PremiseController from './PremiseController.js';
+export * as EnclosureItemController from './EnclosureItemController.js';
+export * as TerminalblocksController from './TerminalblocksController.js';
+export * as СhannelController from './СhannelController.js';
+// export * as GoogleDriveController from './GoogleDriveController.js';
