@@ -8,4 +8,4 @@ export * as PremiseController from './PremiseController.js';
 export * as EnclosureItemController from './EnclosureItemController.js';
 export * as TerminalblocksController from './TerminalblocksController.js';
 export * as СhannelController from './СhannelController.js';
-// export * as GoogleDriveController from './GoogleDriveController.js';
+export * as GoogleDriveController from './GoogleDriveController.js';

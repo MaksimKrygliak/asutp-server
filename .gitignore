@@ -1,3 +1,4 @@
 node_modules
 uploads/*
 service-account-key.json
+google-services.json

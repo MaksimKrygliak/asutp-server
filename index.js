@@ -1,3 +1,4 @@
+//index.js
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
@@ -17,12 +18,25 @@ import {
   EnclosureItemController,
   TerminalblocksController,
   СhannelController,
-  // GoogleDriveController
+  GoogleDriveController,
 } from "./controllers/index.js";
 import { verifyAdminRole } from "./utils/verifyRole.js";
 import { v2 as cloudinary } from "cloudinary";
 import fileUpload from "express-fileupload";
-import { ALL_PERMISSIONS, ROLE_PERMISSIONS, ALL_ROLES } from "./utils/permissions.js";
+import {
+  ALL_PERMISSIONS,
+  ROLE_PERMISSIONS,
+  ALL_ROLES,
+} from "./utils/permissions.js";
+import { authorizeOnce, getAuthUrl } from "./utils/driveService.js";
+
+
+// import { isAuthorized } from "./controllers/GoogleDriveController.js";
+// if (isAuthorized()) {
+//   console.log("✅ Сервер авторизован в Google Drive через OAuth 2.0");
+// } else {
+//   console.log("⚠️ Не авторизован. Пройди OAuth авторизацию через authorizeOnce(code)");
+// }
 
 const mongoUri = process.env.MONGODB_URI;
 const cloud_name = process.env.CLOUD_NAME;
@@ -58,6 +72,7 @@ cloudinary.config({
   api_key: api_key || "218662455584231",
   api_secret: api_secret || "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
 });
+
 app.get("/ping", (req, res) => {
   try {
     res.status(200).json({
@@ -114,7 +129,8 @@ app.get("/users/:id", checkAuth, UserController.getUserById);
 app.patch("/users/handleClearSync", UserController.handleClearSync);
 app.patch("/users/batch-update", UserController.batchUpdateUsers);
 app.patch("/users/:id", UserController.updateUserPassword);
-app.patch("/users/:id/viewed-posts",
+app.patch(
+  "/users/:id/viewed-posts",
   checkAuth,
   UserController.updateViewedPosts
 );
@@ -143,11 +159,9 @@ app.get("/users/:id/permissions", checkAuth, async (req, res) => {
     res.json({ permissions: user.permissions || [] });
   } catch (error) {
     console.error(error);
-    res
-      .status(500)
-      .json({
-        message: "Ошибка сервера при получении разрешений пользователя.",
-      });
+    res.status(500).json({
+      message: "Ошибка сервера при получении разрешений пользователя.",
+    });
   }
 });
 
@@ -169,11 +183,9 @@ app.patch("/users/:id/permissions", checkAuth, async (req, res) => {
       (p) => !validPermissions.includes(p)
     );
     if (invalidPermissions.length > 0) {
-      return res
-        .status(400)
-        .json({
-          message: `Неверные разрешения: ${invalidPermissions.join(", ")}`,
-        });
+      return res.status(400).json({
+        message: `Неверные разрешения: ${invalidPermissions.join(", ")}`,
+      });
     }
 
     const user = await User.findById(req.params.id);
@@ -242,16 +254,44 @@ app.post("/premises/batch-delete", checkAuth, PremiseController.deleteBatch);
 app.get("/premises/changes", checkAuth, PremiseController.getChanges);
 
 // --- МАРШРУТЫ ДЛЯ ENCLOSUREITEMS ---
-app.post("/enclosures/batch-create", checkAuth, EnclosureItemController.createBatch);
-app.patch("/enclosures/batch-update",checkAuth, EnclosureItemController.updateBatch); 
-app.post("/enclosures/batch-delete",checkAuth, EnclosureItemController.deleteBatch);
+app.post(
+  "/enclosures/batch-create",
+  checkAuth,
+  EnclosureItemController.createBatch
+);
+app.patch(
+  "/enclosures/batch-update",
+  checkAuth,
+  EnclosureItemController.updateBatch
+);
+app.post(
+  "/enclosures/batch-delete",
+  checkAuth,
+  EnclosureItemController.deleteBatch
+);
 app.get("/enclosures/changes", checkAuth, EnclosureItemController.getChanges);
 
 // --- МАРШРУТЫ ДЛЯ Terminalblocks ---
-app.post("/terminalblocks/batch-create", checkAuth, TerminalblocksController.createBatch);
-app.patch("/terminalblocks/batch-update", checkAuth, TerminalblocksController.updateBatch);
-app.post("/terminalblocks/batch-delete", checkAuth, TerminalblocksController.deleteBatch);
-app.get("/terminalblocks/changes", checkAuth, TerminalblocksController.getChanges);
+app.post(
+  "/terminalblocks/batch-create",
+  checkAuth,
+  TerminalblocksController.createBatch
+);
+app.patch(
+  "/terminalblocks/batch-update",
+  checkAuth,
+  TerminalblocksController.updateBatch
+);
+app.post(
+  "/terminalblocks/batch-delete",
+  checkAuth,
+  TerminalblocksController.deleteBatch
+);
+app.get(
+  "/terminalblocks/changes",
+  checkAuth,
+  TerminalblocksController.getChanges
+);
 
 // --- МАРШРУТЫ ДЛЯ Сhannel ---
 app.post("/signals/batch-create", checkAuth, СhannelController.createBatch);
@@ -260,7 +300,50 @@ app.post("/signals/batch-delete", checkAuth, СhannelController.deleteBatch);
 app.get("/signals/changes", checkAuth, СhannelController.getChanges);
 
 
-// app.get("/googleDisk/files", GoogleDriveController.getDriveContent);
+
+app.get("/googleDrive/files", checkAuth, GoogleDriveController.getDriveContent);
+app.get("/googleDrive/download/:id", checkAuth, GoogleDriveController.downloadDocument);
+
+// Зашифровать и загрузить файл на Google Drive
+app.post(
+  "/googleDrive/encryptAndUpload",
+  // checkAuth,
+  GoogleDriveController.encryptAndUploadDocument
+);
+
+// Проверка авторизации (удобно для клиента)
+app.get("/googleDrive/isAuthorized", (req, res) => {
+  try {
+    const authorized = GoogleDriveController.isAuthorized();
+    res.json({ authorized });
+  } catch {
+    res.json({ authorized: false });
+  }
+});
+
+// Первый OAuth вход (при отсутствии token.json)
+app.get("/oauth2callback", async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.status(400).send("Не передан параметр code");
+
+  try {
+    await authorizeOnce(code);
+    res.send("✅ Авторизация прошла успешно. Token сохранён.");
+  } catch (err) {
+    console.error("Ошибка авторизации:", err);
+    res.status(500).send("❌ Ошибка при получении токена.");
+  }
+});
+
+app.get("/googleDrive/auth", (req, res) => {
+    try {
+      const authUrl = getAuthUrl();
+      res.redirect(authUrl); // <--- Вот как происходит перенаправление
+    } catch (error) {
+      console.error("Ошибка при генерации URL авторизации:", error);
+      res.status(500).send("Не удалось начать процесс авторизации. Проверьте credentials.json.");
+    }
+  });
 
 app.listen(process.env.PORT || 4000, (err) => {
   if (err) {

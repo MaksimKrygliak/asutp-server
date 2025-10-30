@@ -19,7 +19,7 @@ export const ALL_PERMISSIONS = [
   { name: "Users_Edit", label: "Редагувати користувачів", group: "functional" },
   { name: "UsersPhoto_Edit", label: "Редагувати фото користувачів", group: "functional" },
   { name: "PhoneNumber_Edit", label: "Редагувати телефонний довідник", group: "functional" },
-  { name: "PhoneNumber_Delete", label: "Видаляти телефонний довідник", group: "functional" },
+  { name: "PhoneNumber_Delete", label: "Видаляти телефони з довідника", group: "functional" },
 
   { name: "Locations_Edit", label: "Редагувати локації", group: "functional" },
   { name: "Locations_Delete", label: "Видаляти локації", group: "functional" },
