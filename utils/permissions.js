@@ -3,6 +3,8 @@ export const ALL_PERMISSIONS = [
   { name: "Screen_ScanQR", label: "Екран Сканувати QR", group: "screens" },
   { name: "Screen_GenerateQR", label: "Екран Генератор QR", group: "screens" },
 
+  { name: "Screen_Monitoring", label: "Екран Документація QR", group: "screens" },
+  { name: "Screen_Instructions", label: "Екран Документація QR", group: "screens" },
   { name: "Screen_DocQR", label: "Екран Документація QR", group: "screens" },
   { name: "Screen_Doc", label: "Екран Документація", group: "screens" },
   { name: "Screen_Notes", label: "Екран Нотатки", group: "screens" },
@@ -37,6 +39,7 @@ export const ROLE_PERMISSIONS = {
   ],
   2: [
     PERMISSION_NAMES.Screen_Home,
+    PERMISSION_NAMES.Screen_Instructions,
     PERMISSION_NAMES.Screen_ScanQR,
     PERMISSION_NAMES.Screen_GenerateQR,
     PERMISSION_NAMES.Screen_DocQR,
@@ -50,6 +53,8 @@ export const ROLE_PERMISSIONS = {
   ],
   3: [
     PERMISSION_NAMES.Screen_Home,
+    PERMISSION_NAMES.Screen_Monitoring,
+    PERMISSION_NAMES.Screen_Instructions,
     PERMISSION_NAMES.Screen_ScanQR,
     PERMISSION_NAMES.Screen_GenerateQR,
     PERMISSION_NAMES.Screen_DocQR,
