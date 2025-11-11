@@ -3,8 +3,8 @@ export const ALL_PERMISSIONS = [
   { name: "Screen_ScanQR", label: "Екран Сканувати QR", group: "screens" },
   { name: "Screen_GenerateQR", label: "Екран Генератор QR", group: "screens" },
 
-  { name: "Screen_Monitoring", label: "Екран Документація QR", group: "screens" },
-  { name: "Screen_Instructions", label: "Екран Документація QR", group: "screens" },
+  { name: "Screen_Monitoring", label: "Екран Моніторінгу", group: "screens" },
+  { name: "Screen_Instructions", label: "Екран Інструкцій", group: "screens" },
   { name: "Screen_DocQR", label: "Екран Документація QR", group: "screens" },
   { name: "Screen_Doc", label: "Екран Документація", group: "screens" },
   { name: "Screen_Notes", label: "Екран Нотатки", group: "screens" },
