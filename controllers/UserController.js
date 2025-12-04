@@ -193,7 +193,7 @@ export const verifyEmail = async (req, res) => {
     sendMessage(
       "Новий користувач",
       `"${user.fullName}" приєднався до нас!`,
-      {
+      { 
         notificationType: "NEW_USER_VERIFIED", // Добавил более специфичный тип
         userId: user._id.toString(),
       },
