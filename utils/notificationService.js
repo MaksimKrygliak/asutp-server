@@ -5,18 +5,22 @@ import admin from "firebase-admin";
 // Это приостановит выполнение модуля до загрузки данных.
 let serviceAccount;
 try {
-  // Динамический импорт JSON
-  const module = await import("../firebase-admin-key.json", {
-    with: { type: "json" },
-  });
-  serviceAccount = module.default;
-  console.log("✅ JSON-файл конфигурации успешно загружен.");
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!serviceAccountJson) {
+    throw new Error(
+      "Переменная окружения FIREBASE_SERVICE_ACCOUNT не установлена."
+    );
+  }
+
+  // Парсим строку JSON в объект
+  serviceAccount = JSON.parse(serviceAccountJson);
+
+  console.log("✅ Конфигурация Firebase Admin загружена из ENV.");
 } catch (error) {
   console.error("❌ Ошибка загрузки firebase-admin-key.json:", error);
   // Здесь можно бросить ошибку, чтобы остановить запуск сервера
   throw new Error("Не удалось загрузить учетные данные Firebase Admin.");
 }
-
 
 // 2. Инициализация Firebase Admin SDK
 // Эта инициализация должна произойти только один раз при старте сервера.
@@ -26,12 +30,11 @@ try {
   });
   console.log("✅ Firebase Admin SDK успешно инициализирован.");
 } catch (error) {
-  // Мы игнорируем ошибку, если Firebase уже инициализирован (например, при hot-reload от nodemon)
+  // Мы игнорируем ошибку, если Firebase уже инициализирован
   if (!/already exists/u.test(error.message)) {
     console.error("❌ Ошибка инициализации Firebase Admin:", error);
   }
 }
-
 
 export async function sendPushNotification(
   recipientToken,
@@ -70,7 +73,3 @@ export async function sendPushNotification(
     return { success: false, error: error.message };
   }
 }
-
-// module.exports = {
-//   sendPushNotification,
-// };
