@@ -147,13 +147,11 @@ export async function encryptAndUploadDocument(req, res) {
       });
     }
 
-    const { drive } = await getDriveClient();
+    const { drive } = await getDriveClient(); // временные файлы
 
-    // временные файлы
     const tmpIn = tmpFilePath("decrypted");
-    const tmpOut = tmpFilePath("encrypted");
+    const tmpOut = tmpFilePath("encrypted"); // 1) скачиваем файл (Оставляем как есть - потоковая запись)
 
-    // 1) скачиваем файл (Оставляем как есть - потоковая запись)
     await new Promise(async (resolve, reject) => {
       try {
         const r = await drive.files.get(
@@ -167,62 +165,83 @@ export async function encryptAndUploadDocument(req, res) {
       } catch (e) {
         reject(e);
       }
-    });
+    }); // 2) шифруем (AES-256-CBC)
 
-    // 2) шифруем (AES-256-CBC)
     try {
       await encryptFileRNCompatible(tmpIn, tmpOut, password, true);
     } catch (e) {
       console.error("Ошибка при RN-совместимом шифровании:", e);
       throw new Error("Encryption failed");
-    }
+    } // 3) определяем папку для загрузки
 
-    // 3) определяем папку для загрузки:
-
-    // 🌟 ИСПРАВЛЕНИЕ ЛОГИКИ ОПРЕДЕЛЕНИЯ ПАПКИ: Упрощаем и исправляем логику targetParentId/parentFolderId
-
-    let parentFolderId = encryptedRootId; // По умолчанию - корневая папка для шифрования
+    let parentFolderId = encryptedRootId;
 
     const relFolders = path
       .dirname(relativePath)
-      .split(path.sep) // Используем path.sep для корректной работы на разных ОС
+      .split(path.sep)
       .filter(Boolean)
       .filter((f) => f !== ".");
 
     if (relFolders.length > 0) {
-      // Если есть подпапки, рекурсивно создаем их, начиная от encryptedRootId,
-      // и получаем ID самой последней созданной папки.
       parentFolderId = await ensureFolderPath(
         drive,
         encryptedRootId,
         relFolders
       );
-    }
+    } // Переименование
 
-    // Переименование
     const base = path.basename(relativePath);
-    const encryptedName = base.replace(/\.[^/.]+$/, "") + ".encrypted";
+    const encryptedName = base.replace(/\.[^/.]+$/, "") + ".encrypted"; // ========================================================== // ⭐ ШАГ 4: ПРОВЕРКА НАЛИЧИЯ И ПЕРЕЗАПИСЬ (ОБНОВЛЕНИЕ ЛОГИКИ) ⭐ // ========================================================== // Ищем существующий файл с таким же именем в целевой папке
 
-    // 4) upload
+    const existingFileSearch = await drive.files.list({
+      q: `'${parentFolderId}' in parents and name = '${escapeQuery(
+        encryptedName
+      )}' and trashed = false`,
+      fields: "files(id)",
+      pageSize: 1,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+
+    const existingFileId =
+      existingFileSearch.data.files && existingFileSearch.data.files.length > 0
+        ? existingFileSearch.data.files[0].id
+        : null; // 5) upload / update
+
     const media = {
       mimeType: "application/octet-stream",
       body: fs.createReadStream(tmpOut),
     };
 
-    const uploadResp = await drive.files.create(
-      {
-        requestBody: {
-          name: encryptedName,
-          parents: [parentFolderId], // 👈 Используем корректный ID конечной папки
+    let uploadResp;
+    if (existingFileId) {
+      // Если файл существует, обновляем его (перезаписываем контент)
+      uploadResp = await drive.files.update(
+        {
+          fileId: existingFileId,
+          media,
+          fields: "id, name, parents",
+          supportsAllDrives: true,
         },
-        media,
-        fields: "id, name, parents",
-        supportsAllDrives: true,
-      },
-      {}
-    );
+        {}
+      );
+    } else {
+      // Если файл не существует, создаем новый
+      uploadResp = await drive.files.create(
+        {
+          requestBody: {
+            name: encryptedName,
+            parents: [parentFolderId],
+          },
+          media,
+          fields: "id, name, parents",
+          supportsAllDrives: true,
+        },
+        {}
+      );
+    } // cleanup
+    // ==========================================================
 
-    // cleanup
     try {
       fs.unlinkSync(tmpIn);
     } catch {}
@@ -246,9 +265,9 @@ export async function encryptAndUploadDocument(req, res) {
 }
 
 export async function generatePBKDF2KeyBuffer(password, salt) {
-  const derived = await pbkdf2Async(password, salt, 5000, 32, "sha512"); 
+  const derived = await pbkdf2Async(password, salt, 5000, 32, "sha512");
   const derivedHex = derived.toString("hex");
-  return derived; 
+  return derived;
 }
 
 export async function encryptFileRNCompatible(

@@ -2,7 +2,6 @@ import SignalModel from "../models/Signal.js"; // Предполагается, 
 import TerminalBlockModel from "../models/TerminalBlock.js"; // Предполагается, что вы импортируете TerminalBlock из отдельного файла
 import mongoose from "mongoose";
 
-// --- CREATE BATCH (Пакетное создание сигналов) ---
 export const createBatch = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -17,8 +16,6 @@ export const createBatch = async (req, res) => {
 
   const bulkCreateOps = [];
   const failedNewDocs = [];
-  // Карта для отслеживания родительских TerminalBlock, которые нужно обновить
-  // { serverTerminalBlockId: [newSignalLocalIdString, ...] }
   const terminalBlocksToUpdateMap = {};
 
   try {
@@ -72,8 +69,7 @@ export const createBatch = async (req, res) => {
 
       const newDoc = {
         ...item,
-        _id: newServerId, // Устанавливаем сгенерированный _id
-        // ИСПРАВЛЕНО #1: Устанавливаем ЛОКАЛЬНЫЙ ID родителя, как пришло от клиента
+        _id: newServerId,
         terminalBlock: item.terminalBlock,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -259,6 +255,10 @@ export const updateBatch = async (req, res) => {
               // Поля, специфичные для Signal (из вашей схемы)
               title: item.title,
               address: item.address,
+              type: item.type,
+              location: item.location,
+              minValue: item.minValue,
+              maxValue: item.maxValue,
               description: item.description,
               terminalBlock: finalParentId, // Обновляем ссылку на родителя
               isPendingDeletion: item.isPendingDeletion || false,
@@ -468,100 +468,7 @@ export const deleteBatch = async (req, res) => {
     session.endSession();
   }
 };
-// export const deleteBatch = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
 
-//   try {
-//     // ПРЕДПОЛАГАЕМ: ids - массив серверных _id для удаления
-//     const { ids } = req.body;
-
-//     const validObjectIds = ids
-//       .filter((id) => mongoose.Types.ObjectId.isValid(id))
-//       .map((id) => new mongoose.Types.ObjectId(id));
-
-//     if (validObjectIds.length === 0) {
-//       await session.endSession();
-//       return res.status(400).json({ message: "Некорректные ID для удаления." });
-//     }
-
-//     // 1. Находим сигналы
-//     // Получаем серверный _id, локальный ID сигнала (__localId) и локальный ID родителя (terminalBlock)
-//     const signalsToDelete = await SignalModel.find({
-//       _id: { $in: validObjectIds },
-//       isPendingDeletion: false,
-//     })
-//       .select("_id __localId terminalBlock") // Выбираем только нужные поля
-//       .session(session);
-
-//       console.log("signalsToDelete", signalsToDelete)
-//     if (signalsToDelete.length === 0) {
-//       await session.commitTransaction();
-//       await session.endSession();
-//       // Возвращаем 200, если ничего не найдено или уже удалено
-//       return res
-//         .status(200)
-//         .json({
-//           successIds: [],
-//           failedIds: ids.map((id) => ({
-//             _id: id,
-//             message: "Не найдены или уже помечены для удаления.",
-//           })),
-//         });
-//     }
-
-//     // 2. Выполняем мягкое удаление сигналов
-//     await SignalModel.updateMany(
-//       { _id: { $in: validObjectIds }, isPendingDeletion: false },
-//       { $set: { isPendingDeletion: true, updatedAt: new Date() } },
-//       { session: session }
-//     );
-
-//     // 3. Подготавливаем операции для родительских TerminalBlock (удаление ссылок - $pull)
-//     const terminalBlockPullOps = signalsToDelete
-//       .filter((item) => item.terminalBlock && item.__localId) // Фильтруем, чтобы избежать ошибок
-//       .map((item) => ({
-//         updateOne: {
-//           // ИСПРАВЛЕНО: Используем ЛОКАЛЬНЫЙ ID родителя (item.terminalBlock) для поиска
-//           filter: { __localId: item.terminalBlock },
-//           update: {
-//             // ИСПРАВЛЕНО: Используем ЛОКАЛЬНЫЙ ID сигнала (item.__localId) для удаления из массива signals
-//             $pull: { signals: item.__localId },
-//             $set: { updatedAt: new Date() },
-//           },
-//         },
-//       }));
-
-//     if (terminalBlockPullOps.length > 0) {
-//       await TerminalBlockModel.bulkWrite(terminalBlockPullOps, { session });
-//     }
-
-//     // 4. Формирование ответа
-//     // В successIds возвращаем серверные ID, которые были успешно обработаны
-//     const successServerIds = signalsToDelete.map((item) => item._id.toString());
-//     const failedIds = ids.filter((id) => !successServerIds.includes(id));
-
-//     await session.commitTransaction();
-//     res.json({
-//       successIds: successServerIds,
-//       failedIds: failedIds.map((id) => ({
-//         _id: id,
-//         message: "Сигнал не найден или уже помечен для удаления.",
-//       })),
-//     });
-//   } catch (error) {
-//     await session.abortTransaction();
-//     console.error("Ошибка пакетного мягкого удаления Signal:", error);
-//     res.status(500).json({
-//       message: "Не удалось выполнить пакетное мягкое удаление сигналов.",
-//       error: error.message,
-//     });
-//   } finally {
-//     session.endSession();
-//   }
-// };
-
-// --- GET CHANGES (Получение изменений для Pull) ---
 export const getChanges = async (req, res) => {
   try {
     const lastSync = req.query.since ? new Date(req.query.since) : new Date(0);

@@ -15,18 +15,26 @@ const UserSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    brigade: {
-      type: Number,
-    },
     passwordHash: {
       type: String,
       required: true,
+    },
+    brigade: {
+      type: Number,
     },
     avatarUrl: {
       type: String,
       default: "",
     },
     cloudinaryPublicId: {
+      type: String,
+      default: "",
+    },
+    fcmToken: {
+      type: String,
+      optional: true
+    },
+    appVersion: {
       type: String,
       default: "",
     },

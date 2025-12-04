@@ -5,6 +5,7 @@ import UserModel from "../models/User.js";
 import transporter from "../utils/nodemailerConfig.js";
 import { v2 as cloudinary } from "cloudinary";
 import mongoose from "mongoose";
+import sendMessage from "../utils/sendMessage.js";
 const ObjectId = mongoose.Types.ObjectId;
 
 const cloud_name = process.env.CLOUD_NAME;
@@ -21,7 +22,7 @@ const TOKEN_EXPIRATION_DATA = "90d";
 
 export const register = async (req, res) => {
   try {
-    const { fullName, email, engineerPosition, password } = req.body;
+    const { fullName, email, engineerPosition, brigade, password } = req.body;
 
     // Перевірка, чи існує користувач з таким email
     const existingUser = await UserModel.findOne({ email });
@@ -39,6 +40,7 @@ export const register = async (req, res) => {
       fullName,
       email,
       engineerPosition,
+      brigade,
       passwordHash,
       verificationToken,
       isVerified: false,
@@ -103,15 +105,81 @@ export const register = async (req, res) => {
   }
 };
 
+const renderHtmlMessage = (title, message, isSuccess = false) => {
+  const bgColor = isSuccess ? "#34D399" : "#F87171";
+  const textColor = "#1F2937";
+
+  return `
+    <!DOCTYPE html>
+    <html lang="uk">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${title}</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                margin: 0;
+                padding: 40px;
+                background-color: #F3F4F6;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+            }
+            .container {
+                max-width: 400px;
+                padding: 30px;
+                border-radius: 12px;
+                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+                text-align: center;
+                background-color: #FFFFFF;
+                border-left: 8px solid ${bgColor};
+            }
+            h1 {
+                color: ${textColor};
+                font-size: 24px;
+                margin-bottom: 15px;
+            }
+            p {
+                color: #4B5563;
+                font-size: 16px;
+                margin-bottom: 0;
+            }
+            .status-indicator {
+                font-size: 32px;
+                margin-bottom: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="status-indicator">${isSuccess ? "✅" : "❌"}</div>
+            <h1>${title}</h1>
+            <p>${message}</p>
+        </div>
+    </body>
+    </html>
+  `;
+};
+
 export const verifyEmail = async (req, res) => {
   try {
     const { token } = req.params;
     const user = await UserModel.findOne({ verificationToken: token });
 
     if (!user) {
+      // ИЗМЕНЕНИЕ: Возвращаем HTML-страницу вместо JSON, чтобы пользователь в браузере
+      // увидел дружелюбное сообщение об ошибке.
       return res
         .status(400)
-        .json({ message: "Неправильний або застарілий токен підтвердження." });
+        .send(
+          renderHtmlMessage(
+            "Помилка підтвердження",
+            "Неправильний або застарілий токен підтвердження. Спробуйте увійти або повторно надіслати лист.",
+            false
+          )
+        );
     }
 
     user.isVerified = true;
@@ -122,12 +190,36 @@ export const verifyEmail = async (req, res) => {
       expiresIn: TOKEN_EXPIRATION_DATA,
     });
 
-    const { passwordHash, verificationToken: vt, ...userData } = user._doc;
+    sendMessage(
+      "Новий користувач",
+      `"${user.fullName}" приєднався до нас!`,
+      {
+        notificationType: "NEW_USER_VERIFIED", // Добавил более специфичный тип
+        userId: user._id.toString(),
+      },
+      true
+    ).catch((err) => {
+      // Логгируем ошибку, но не блокируем основной поток и не отправляем 500 клиенту
+      console.error(
+        "Ошибка при отправке уведомления о новом пользователе:",
+        err
+      );
+    });
+
     const redirectUrl = `asutpdigital://verification-success?token=${jwtToken}`;
-    return res.redirect(redirectUrl);
+    res.redirect(redirectUrl);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Помилка під час підтвердження email." });
+    // ИЗМЕНЕНИЕ: Возвращаем HTML-страницу в случае критической ошибки сервера.
+    res
+      .status(500)
+      .send(
+        renderHtmlMessage(
+          "Критична помилка сервера",
+          "Виникла внутрішня помилка сервера. Будь ласка, спробуйте пізніше.",
+          false
+        )
+      );
   }
 };
 
@@ -229,13 +321,14 @@ export const getUserById = async (req, res) => {
 export const updateUserPassword = async (req, res) => {
   try {
     const userId = req.params.id;
-    const { fullName, email, engineerPosition, password, role } = req.body;
+    const { fullName, email, engineerPosition, brigade, password, role } =
+      req.body;
     const user = await UserModel.findById(userId);
     if (!user) {
       return res.status(404).json({ message: "Користувача не знайдено" });
     }
 
-    const updateData = { fullName, email, engineerPosition, role };
+    const updateData = { fullName, email, engineerPosition, brigade, role };
 
     if (password) {
       const salt = await bcrypt.genSalt(10);
@@ -374,7 +467,7 @@ export const batchUpdateUsers = async (req, res) => {
           key !== "_id" &&
           key !== "createdAt" &&
           key !== "updatedAt" &&
-          key !== "lastSyncTimes" 
+          key !== "lastSyncTimes"
         ) {
           mongoDbUser[key] = user[key];
         }
@@ -387,12 +480,17 @@ export const batchUpdateUsers = async (req, res) => {
       // ✅ Возвращаем только строку ID
       return { status: "fulfilled", value: user._id };
     } catch (error) {
-      console.error(`Ошибка при обновлении пользователя с ID ${user._id}:`, error);
+      console.error(
+        `Ошибка при обновлении пользователя с ID ${user._id}:`,
+        error
+      );
       return {
         status: "rejected",
         reason: {
           _id: user._id,
-          message: error.message || "Внутренняя ошибка сервера при обновлении пользователя.",
+          message:
+            error.message ||
+            "Внутренняя ошибка сервера при обновлении пользователя.",
         },
       };
     }
@@ -425,12 +523,17 @@ export const getChanges = async (req, res) => {
     const createdOrUpdatedUsers = await UserModel.find({
       $or: [{ updatedAt: { $gte: since } }, { createdAt: { $gte: since } }],
       isDeleted: { $ne: true },
-    }).lean().exec();
+    })
+      .lean()
+      .exec();
 
     const deletedUsersIds = await UserModel.find(
       { isDeleted: true, updatedAt: { $gte: since } },
       "_id"
-    ).lean().exec().then((docs) => docs.map((doc) => doc._id.toString()));
+    )
+      .lean()
+      .exec()
+      .then((docs) => docs.map((doc) => doc._id.toString()));
 
     const serverCurrentTimestamp = new Date().toISOString();
 
@@ -571,5 +674,75 @@ export const deletePhotoProfile = async (req, res) => {
   } catch (error) {
     console.error("Помилка видалення аватара з Cloudinary:", error);
     res.status(500).json({ message: "Не вдалося видалити зображення." });
+  }
+};
+
+export const updateAppVersion = async (req, res) => {
+  // 1. Получение ID пользователя из объекта запроса.
+  // Предполагается, что ваш middleware для аутентификации уже добавил user.id в req.user
+  const userId = req.userId;
+
+  // 2. Получение данных из тела запроса
+  const { appVersion } = req.body;
+
+  // 3. Базовая валидация данных
+  if (!appVersion || typeof appVersion !== "string" || appVersion.length > 20) {
+    return res.status(400).json({
+      message:
+        "Неверный или отсутствующий номер версии приложения (appVersion).",
+    });
+  }
+
+  // 4. Логика обновления в базе данных
+  try {
+    // Мы используем плейсхолдер User.findByIdAndUpdate
+    // В реальном приложении это будет вызов MongoDB (Mongoose), SQL (Sequelize/Prisma) и т.д.
+    const updatedUser = await UserModel.findByIdAndUpdate(
+      userId,
+      {
+        appVersion: appVersion,
+      },
+      { new: true, runValidators: true } // { new: true } возвращает обновленный документ
+    );
+
+    // Проверка, найден ли пользователь
+    if (!updatedUser) {
+      return res.status(404).json({ message: "Пользователь не найден." });
+    }
+
+    // 5. Успешный ответ
+    return res.status(200).json({
+      message: "Версия приложения успешно обновлена.",
+      currentVersion: updatedUser.appVersion,
+    });
+  } catch (error) {
+    console.error("Ошибка при обновлении версии приложения:", error);
+
+    // 6. Обработка ошибок БД
+    return res.status(500).json({
+      message: "Ошибка сервера при обновлении записи.",
+      error: error.message,
+    });
+  }
+};
+
+export const updatePushToken = async (req, res) => {
+  const userId = req.userId; // Получаем из checkAuth middleware
+  const { pushToken } = req.body;
+
+  if (!pushToken || typeof pushToken !== "string") {
+    return res.status(400).json({ message: "Отсутствует pushToken." });
+  }
+
+  try {
+    await UserModel.findByIdAndUpdate(
+      userId,
+      { fcmToken: pushToken },
+      { new: true }
+    );
+    return res.status(200).json({ message: "Push-токен успешно сохранен." });
+  } catch (error) {
+    console.error("Ошибка сохранения push-токена:", error);
+    return res.status(500).json({ message: "Ошибка сервера." });
   }
 };

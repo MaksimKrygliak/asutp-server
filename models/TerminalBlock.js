@@ -5,6 +5,7 @@ const TerminalBlockSchema = new mongoose.Schema({
   __localId: { type: mongoose.Schema.Types.ObjectId, required: true, unique: true },
   title: { type: String, required: true },
   description: { type: String },
+  position: { type: Number, required: true },
   enclosureItem: { type: mongoose.Schema.Types.ObjectId, ref: 'EnclosureItem' }, // Ссылка на родительский EnclosureItem
   isPendingDeletion: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },

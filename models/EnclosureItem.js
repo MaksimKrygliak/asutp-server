@@ -5,6 +5,7 @@ const EnclosureItemSchema = new mongoose.Schema({
   __localId: { type: mongoose.Schema.Types.ObjectId, required: true, unique: true },
   title: { type: String, required: true },
   image: { type: String },
+  position: { type: Number, required: true },
   description: { type: String },
   premise: { type: mongoose.Schema.Types.ObjectId, ref: 'Premise' },
   isPendingDeletion: { type: Boolean, default: false },
