@@ -449,7 +449,6 @@ export const getChanges = async (req, res) => {
       .populate("user") // Если поле 'user' это ObjectId и вы хотите подтянуть данные пользователя
       .lean() // Преобразует Mongoose-документы в простые JavaScript-объекты для чистоты
       .exec();
-
     // Збираємо всі унікальні ID користувачів з отриманих постів
     const allUserIdsInChanges = new Set();
 

@@ -48,7 +48,6 @@ export const ROLE_PERMISSIONS = {
     PERMISSION_NAMES.Screen_PhoneNumber,
     PERMISSION_NAMES.Screen_User,
     PERMISSION_NAMES.Screen_Location,
-
     PERMISSION_NAMES.Download_doc_zip,
   ],
   3: [

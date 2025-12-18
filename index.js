@@ -9,6 +9,7 @@ import {
 } from "./validations.js";
 import { handleValidationErrors, checkAuth } from "./utils/index.js";
 import {
+  authController,
   UserController,
   PostController,
   DocController,
@@ -119,14 +120,10 @@ app.get("/ping", (req, res) => {
 app.get("/app_config", (req, res) => {
   try {
     const config = {
-      latest_app_version: latest_app_version || "2.0.0",
-      force_update_min_version: force_update_min_version || "2.0.0",
-      update_url_android:
-        update_url_android ||
-        "https://drive.google.com/uc?export=download&id=11X1g5k2V3nr85u-0ctrTKZYUrwPrLPxf",
-      documents_zip_download_url:
-        DOCUMENTS_ZIP_DOWNLOAD_URL ||
-        "https://drive.google.com/file/d/11X1g5k2V3nr85u-0ctrTKZYUrwPrLPxf/view?usp=drive_link",
+      latest_app_version: latest_app_version,
+      force_update_min_version: force_update_min_version,
+      update_url_android: update_url_android,
+      documents_zip_download_url: DOCUMENTS_ZIP_DOWNLOAD_URL,
     };
 
     res.json(config);
@@ -148,14 +145,20 @@ app.post(
   handleValidationErrors,
   UserController.register
 );
+
+app.post(
+  "/auth/microsoft",
+  authController.auth
+);
+
 app.get("/auth/verify/:token", UserController.verifyEmail);
 app.get("/auth/me", checkAuth, UserController.getMe);
 
 app.get("/users", checkAuth, UserController.getAllUsers);
 app.get("/users/changes", checkAuth, UserController.getChanges);
 app.get("/users/:id", checkAuth, UserController.getUserById);
-app.patch("/users/handleClearSync", UserController.handleClearSync);
-app.patch("/users/batch-update", UserController.batchUpdateUsers);
+app.patch("/users/handleClearSync", checkAuth, UserController.handleClearSync);
+app.patch("/users/batch-update",checkAuth, UserController.batchUpdateUsers);
 app.patch("/users/:id", UserController.updateUserPassword);
 app.patch(
   "/users/:id/viewed-posts",
@@ -294,26 +297,26 @@ app.post(
 );
 // ----------------------------------------------------------------------------------
 
-app.get("/phoneNumbers", PhoneNumberController.getAll);
-app.get("/phoneNumbers/:id", PhoneNumberController.getOne);
+app.get("/phoneNumbers", checkAuth, PhoneNumberController.getAll);
+app.get("/phoneNumbers/:id", checkAuth, PhoneNumberController.getOne);
 app.post("/phoneNumbers", checkAuth, PhoneNumberController.create);
 app.delete("/phoneNumbers/:id", checkAuth, PhoneNumberController.remove);
 app.patch("/phoneNumbers/:id", checkAuth, PhoneNumberController.update);
 
-app.get("/tags", PostController.getLastTags);
-app.get("/posts", PostController.getAll);
-app.get("/posts/tags", PostController.getLastTags);
+app.get("/tags", checkAuth, PostController.getLastTags);
+app.get("/posts", checkAuth, PostController.getAll);
+app.get("/posts/tags", checkAuth, PostController.getLastTags);
 app.get("/posts/changes", checkAuth, PostController.getChanges);
-app.get("/posts/:id", PostController.getOne);
+app.get("/posts/:id", checkAuth, PostController.getOne);
 app.post("/posts/batch-create", checkAuth, PostController.batchCreate);
 app.post("/posts/batch-delete", checkAuth, PostController.batchDeletePosts);
 app.patch("/posts/batch-update", checkAuth, PostController.batchUpdatePosts);
 
-app.get("/docs/changes", DocController.getChanges);
+app.get("/docs/changes", checkAuth, DocController.getChanges);
 
-app.post("/docs/batch-create", DocController.batchCreate);
-app.post("/docs/batch-delete", DocController.batchDeleteDocs);
-app.patch("/docs/batch-update", DocController.batchUpdate);
+app.post("/docs/batch-create", checkAuth, DocController.batchCreate);
+app.post("/docs/batch-delete", checkAuth, DocController.batchDeleteDocs);
+app.patch("/docs/batch-update", checkAuth, DocController.batchUpdate);
 
 app.delete("/posts/:id", checkAuth, PostController.deletePost);
 
@@ -387,12 +390,12 @@ app.get(
 // Зашифровать и загрузить файл на Google Drive
 app.post(
   "/googleDrive/encryptAndUpload",
-  // checkAuth,
+  checkAuth,
   GoogleDriveController.encryptAndUploadDocument
 );
 
 // Проверка авторизации (удобно для клиента)
-app.get("/googleDrive/isAuthorized", (req, res) => {
+app.get("/googleDrive/isAuthorized", checkAuth, (req, res) => {
   try {
     const authorized = GoogleDriveController.isAuthorized();
     res.json({ authorized });
