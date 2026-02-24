@@ -15,7 +15,7 @@ export const auth = async (req, res) => {
     const msResponse = await axios.get("https://graph.microsoft.com/v1.0/me", {
       headers: { Authorization: `Bearer ${access_token}` },
     });
-    console.log(msResponse.data);
+    // console.log(msResponse.data);
     const {
       mail,
       userPrincipalName,

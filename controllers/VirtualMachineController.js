@@ -2,450 +2,234 @@ import VirtualMachineModel from "../models/VirtualMachine.js";
 import ComputerModel from "../models/Computer.js";
 import ServerModel from "../models/Server.js";
 import mongoose from "mongoose";
-import { encrypt, decrypt } from "../utils/encryption.js";
 
-// --- CREATE BATCH ---
+const ObjectId = mongoose.Types.ObjectId;
+
+// --- 1. CREATE BATCH ---
 export const createBatch = async (req, res) => {
-  // Сессия создается, но транзакция пока НЕ начинается
-  const session = await mongoose.startSession();
-
   try {
     const newItemsBatch = req.body;
     if (!Array.isArray(newItemsBatch) || newItemsBatch.length === 0) {
-      return res.status(400).json({ message: "Нет данных." });
+      return res.status(400).json({ message: "Нет данных для создания." });
     }
 
-    // =====================================================================
-    // ЭТАП 1: ПОДГОТОВКА ДАННЫХ (Чтение БЕЗ транзакции)
-    // Мы делаем это "снаружи", чтобы не держать транзакцию открытой пока ищем
-    // =====================================================================
-
-    // 1. Собираем ID
-    const parentComputerLocalIdsRaw = [
+    // 1. Собираем уникальные локальные ID потенциальных родителей
+    const localCompIds = [
       ...new Set(newItemsBatch.map((i) => i.computer).filter((id) => id)),
     ];
-    const parentServerLocalIdsRaw = [
+    const localServIds = [
       ...new Set(newItemsBatch.map((i) => i.server).filter((id) => id)),
     ];
 
-    const parentComputerIds = parentComputerLocalIdsRaw.map(
-      (id) => new mongoose.Types.ObjectId(id)
-    );
-    const parentServerIds = parentServerLocalIdsRaw.map(
-      (id) => new mongoose.Types.ObjectId(id)
-    );
-
-    // 2. Ищем родителей (БЕЗ session(session), обычный поиск)
-    // Это снижает нагрузку на транзакционный движок Mongo
-    const [foundComputers, foundServers] = await Promise.all([
-      ComputerModel.find({ __localId: { $in: parentComputerIds } }).lean(),
-      ServerModel.find({ __localId: { $in: parentServerIds } }).lean(),
+    // 2. Ищем серверные _id родителей в БД
+    const [foundComps, foundServs] = await Promise.all([
+      ComputerModel.find({
+        __localId: { $in: localCompIds.map((id) => new ObjectId(id)) },
+      })
+        .select("_id __localId")
+        .lean(),
+      ServerModel.find({
+        __localId: { $in: localServIds.map((id) => new ObjectId(id)) },
+      })
+        .select("_id __localId")
+        .lean(),
     ]);
 
-    const computerMap = foundComputers.reduce((map, item) => {
-      map[item.__localId.toString()] = item;
-      return map;
-    }, {});
-
-    const serverMap = foundServers.reduce((map, item) => {
-      map[item.__localId.toString()] = item;
-      return map;
-    }, {});
-
-    // =====================================================================
-    // ЭТАП 2: ТРАНЗАКЦИЯ (Только запись)
-    // =====================================================================
-    session.startTransaction();
-
-    const bulkCreateOps = [];
-    const computersToUpdateMap = {};
-    const serversToUpdateMap = {};
-
-    // 3. Обработка данных (в памяти, очень быстро)
-    for (const item of newItemsBatch) {
-      if (!item.__localId) continue;
-      if (!item.computer && !item.server) continue;
-
-      let isComputerParent = false;
-      let parentLocalIdStr = null;
-
-      if (item.computer) {
-        parentLocalIdStr = item.computer.toString();
-        // Используем карту, которую подготовили на Этапе 1
-        if (!computerMap[parentLocalIdStr]) {
-          console.warn(`Родитель-Компьютер ${item.computer} не найден.`);
-          continue;
-        }
-        isComputerParent = true;
-      } else if (item.server) {
-        parentLocalIdStr = item.server.toString();
-        if (!serverMap[parentLocalIdStr]) {
-          console.warn(`Родитель-Сервер ${item.server} не найден.`);
-          continue;
-        }
-        isComputerParent = false;
-      }
-
-      const newServerId = new mongoose.Types.ObjectId();
-
-      const newDoc = {
-        ...item,
-        _id: newServerId,
-        computer: item.computer || null,
-        server: item.server || null,
-        // Безопасное шифрование
-        login: item.login ? encrypt(item.login) : "",
-        password: item.password ? encrypt(item.password) : "",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        isPendingDeletion: false,
-      };
-
-      bulkCreateOps.push({ insertOne: { document: newDoc } });
-
-      if (isComputerParent) {
-        if (!computersToUpdateMap[parentLocalIdStr])
-          computersToUpdateMap[parentLocalIdStr] = [];
-        computersToUpdateMap[parentLocalIdStr].push(item.__localId);
-      } else {
-        if (!serversToUpdateMap[parentLocalIdStr])
-          serversToUpdateMap[parentLocalIdStr] = [];
-        serversToUpdateMap[parentLocalIdStr].push(item.__localId);
-      }
-    }
-
-    // 4. Запись в БД (Быстро, внутри транзакции)
-    if (bulkCreateOps.length > 0) {
-      await VirtualMachineModel.bulkWrite(bulkCreateOps, { session });
-    }
-
-    // 5. Обновление родителей
-    const bulkComputerOps = Object.keys(computersToUpdateMap).map(
-      (compLocalId) => ({
-        updateOne: {
-          filter: { __localId: new mongoose.Types.ObjectId(compLocalId) },
-          update: {
-            $addToSet: {
-              virtualMachines: { $each: computersToUpdateMap[compLocalId] },
-            },
-            $set: { updatedAt: new Date() },
-          },
-        },
-      })
+    // Создаем карты соответствия
+    const compMap = foundComps.reduce(
+      (map, c) => ({ ...map, [c.__localId.toString()]: c._id }),
+      {}
     );
-
-    const bulkServerOps = Object.keys(serversToUpdateMap).map(
-      (servLocalId) => ({
-        updateOne: {
-          filter: { __localId: new mongoose.Types.ObjectId(servLocalId) },
-          update: {
-            $addToSet: {
-              virtualMachines: { $each: serversToUpdateMap[servLocalId] },
-            },
-            $set: { updatedAt: new Date() },
-          },
-        },
-      })
-    );
-
-    if (bulkComputerOps.length > 0)
-      await ComputerModel.bulkWrite(bulkComputerOps, { session });
-    if (bulkServerOps.length > 0)
-      await ServerModel.bulkWrite(bulkServerOps, { session });
-
-    // Успех
-    const successNewDocs = bulkCreateOps.map((op) => ({
-      _id: op.insertOne.document._id.toHexString(),
-      __localId: op.insertOne.document.__localId,
-      updatedAt: op.insertOne.document.updatedAt,
-    }));
-
-    await session.commitTransaction();
-    res.json({ successNewDocs, failedNewDocs: [] });
-  } catch (error) {
-    // Безопасная отмена
-    if (session.inTransaction()) {
-      await session.abortTransaction();
-    }
-    console.error("VM Create Error:", error);
-    res.status(500).json({ message: error.message });
-  } finally {
-    await session.endSession();
-  }
-};
-
-// --- UPDATE BATCH ---
-export const updateBatch = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  const updatedItems = req.body;
-  const bulkUpdateOps = [];
-  const successDocs = [];
-
-  const pullFromComp = {};
-  const pushToComp = {};
-  const pullFromServer = {};
-  const pushToServer = {};
-
-  try {
-    const ids = updatedItems.map((i) => new mongoose.Types.ObjectId(i._id));
-    const oldDocs = await VirtualMachineModel.find({ _id: { $in: ids } })
-      .session(session)
-      .lean();
-    const oldDocsMap = oldDocs.reduce(
-      (map, doc) => ({ ...map, [doc._id.toString()]: doc }),
+    const servMap = foundServs.reduce(
+      (map, s) => ({ ...map, [s.__localId.toString()]: s._id }),
       {}
     );
 
-    for (const item of updatedItems) {
-      if (!item._id || !oldDocsMap[item._id]) continue;
-      const oldDoc = oldDocsMap[item._id];
-      const vmLocalId = item.__localId;
+    // 3. Подготовка документов
+    const docsToInsert = newItemsBatch
+      .map((item) => {
+        // Пытаемся найти серверный ID родителя (либо ПК, либо Сервер)
+        const parentCompId = item.computer
+          ? compMap[item.computer.toString()]
+          : null;
+        const parentServId = item.server
+          ? servMap[item.server.toString()]
+          : null;
 
-      let oldParentType = "none";
-      let oldParentId = null;
-
-      if (oldDoc.computer) {
-        oldParentType = "pc";
-        oldParentId = oldDoc.computer.toString();
-      } else if (oldDoc.server) {
-        oldParentType = "server";
-        oldParentId = oldDoc.server.toString();
-      }
-
-      let newParentType = "none";
-      let newParentId = null;
-
-      if (item.computer) {
-        newParentType = "pc";
-        newParentId = item.computer.toString();
-      } else if (item.server) {
-        newParentType = "server";
-        newParentId = item.server.toString();
-      } else {
-        if (item.computer === undefined && item.server === undefined) {
-          newParentType = oldParentType;
-          newParentId = oldParentId;
-        }
-      }
-
-      const parentChanged =
-        oldParentType !== newParentType || oldParentId !== newParentId;
-
-      if (parentChanged) {
-        if (oldParentType === "pc" && oldParentId) {
-          if (!pullFromComp[oldParentId]) pullFromComp[oldParentId] = [];
-          pullFromComp[oldParentId].push(vmLocalId);
-        } else if (oldParentType === "server" && oldParentId) {
-          if (!pullFromServer[oldParentId]) pullFromServer[oldParentId] = [];
-          pullFromServer[oldParentId].push(vmLocalId);
+        // Если в данных был родитель, но мы не нашли его в БД — пропускаем, чтобы не было "сирот"
+        if (
+          (item.computer && !parentCompId) ||
+          (item.server && !parentServId)
+        ) {
+          console.warn(
+            `Родитель для VM ${item.__localId} не найден на сервере.`
+          );
+          return null;
         }
 
-        if (newParentType === "pc" && newParentId) {
-          if (!pushToComp[newParentId]) pushToComp[newParentId] = [];
-          pushToComp[newParentId].push(vmLocalId);
-        } else if (newParentType === "server" && newParentId) {
-          if (!pushToServer[newParentId]) pushToServer[newParentId] = [];
-          pushToServer[newParentId].push(vmLocalId);
-        }
-      }
+        return {
+          ...item,
+          _id: new ObjectId(),
+          __localId: new ObjectId(item.__localId),
+          computer: parentCompId,
+          server: parentServId,
+          login: item.login || "",
+          password: item.password || "",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          isPendingDeletion: false,
+        };
+      })
+      .filter((doc) => doc !== null);
+
+    if (docsToInsert.length > 0) {
+      await VirtualMachineModel.insertMany(docsToInsert, { ordered: false });
+    }
+
+    const successNewDocs = docsToInsert.map((doc) => ({
+      _id: doc._id.toString(),
+      __localId: doc.__localId.toString(),
+      updatedAt: doc.updatedAt,
+    }));
+
+    res.json({ successNewDocs, failedNewDocs: [] });
+  } catch (error) {
+    console.error("VM Create Error:", error);
+    res.status(500).json({ message: "Ошибка при создании виртуальных машин." });
+  }
+};
+
+// --- 2. UPDATE BATCH ---
+export const updateBatch = async (req, res) => {
+  try {
+    const updatedItems = req.body;
+    if (!Array.isArray(updatedItems) || updatedItems.length === 0) {
+      return res.status(400).json({ message: "Нет данных для обновления." });
+    }
+
+    const bulkUpdateOps = updatedItems.map((item) => {
+      const { _id, __localId, ...dataToUpdate } = item;
 
       const updateFields = {
-        title: item.title,
-        description: item.description,
-        IPaddress: item.IPaddress,
-        image: item.image,
-        position: item.position,
-        computer: newParentType === "pc" ? item.computer : null,
-        server: newParentType === "server" ? item.server : null,
-        isPendingDeletion: item.isPendingDeletion || false,
+        ...dataToUpdate,
         updatedAt: new Date(),
       };
 
-      // 🔥 ИСПРАВЛЕНИЕ: Безопасное обновление шифрования
-      if (item.login !== undefined)
-        updateFields.login = item.login ? encrypt(item.login) : "";
-      if (item.password !== undefined)
-        updateFields.password = item.password ? encrypt(item.password) : "";
+      // Конвертируем ID родителей, если они пришли в теле (после PULL они уже серверные)
+      if (dataToUpdate.computer)
+        updateFields.computer = new ObjectId(dataToUpdate.computer);
+      if (dataToUpdate.server)
+        updateFields.server = new ObjectId(dataToUpdate.server);
 
-      bulkUpdateOps.push({
+      if (item.login !== undefined) updateFields.login = item.login || "";
+      if (item.password !== undefined)
+        updateFields.password = item.password || "";
+
+      return {
         updateOne: {
-          filter: { _id: item._id },
+          filter: { _id: new ObjectId(_id) },
           update: { $set: updateFields },
         },
-      });
-
-      successDocs.push({
-        __localId: item.__localId,
-        _id: item._id,
-        updatedAt: new Date(),
-      });
-    }
+      };
+    });
 
     if (bulkUpdateOps.length > 0) {
-      await VirtualMachineModel.bulkWrite(bulkUpdateOps, { session });
+      await VirtualMachineModel.bulkWrite(bulkUpdateOps);
     }
 
-    const createParentOps = (map, model, type) => {
-      return Object.keys(map).map((parentId) => ({
-        updateOne: {
-          filter: { __localId: new mongoose.Types.ObjectId(parentId) },
-          update: {
-            [type]: {
-              virtualMachines:
-                type === "$pullAll" ? map[parentId] : { $each: map[parentId] },
-            },
-            $set: { updatedAt: new Date() },
-          },
-        },
-      }));
-    };
+    const successUpdatedDocs = updatedItems.map((item) => ({
+      __localId: item.__localId,
+      _id: item._id,
+      updatedAt: new Date(),
+    }));
 
-    const pullCompOps = createParentOps(
-      pullFromComp,
-      ComputerModel,
-      "$pullAll"
-    );
-    const pushCompOps = createParentOps(pushToComp, ComputerModel, "$addToSet");
-    const pullServOps = createParentOps(
-      pullFromServer,
-      ServerModel,
-      "$pullAll"
-    );
-    const pushServOps = createParentOps(pushToServer, ServerModel, "$addToSet");
-
-    if (pullCompOps.length)
-      await ComputerModel.bulkWrite(pullCompOps, { session });
-    if (pushCompOps.length)
-      await ComputerModel.bulkWrite(pushCompOps, { session });
-    if (pullServOps.length)
-      await ServerModel.bulkWrite(pullServOps, { session });
-    if (pushServOps.length)
-      await ServerModel.bulkWrite(pushServOps, { session });
-
-    await session.commitTransaction();
-    res.json({ successUpdatedDocs: successDocs, failedUpdatedDocs: [] });
+    res.json({ successUpdatedDocs, failedUpdatedDocs: [] });
   } catch (error) {
-    await session.abortTransaction();
     console.error("VM Update Error:", error);
-    res.status(500).json({ message: error.message });
-  } finally {
-    session.endSession();
+    res
+      .status(500)
+      .json({ message: "Ошибка при обновлении виртуальных машин." });
   }
 };
 
+// --- 3. DELETE BATCH (Мягкое удаление по localIds) ---
+// --- 3. DELETE BATCH (Мягкое удаление по серверным _id) ---
 export const deleteBatch = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  // Принимаем 'ids', так как GenericSync шлет именно этот ключ
   const { ids } = req.body;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ message: "ids должен быть массивом." });
+  }
 
   try {
     const now = new Date();
-    const vmsToDelete = await VirtualMachineModel.find({
-      _id: { $in: ids },
-    }).session(session);
+    // Фильтруем валидные ObjectId, чтобы избежать ошибок кастинга
+    const serverObjectIds = ids
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
 
-    if (vmsToDelete.length === 0) {
-      await session.commitTransaction();
-      return res.json({ success: true, successDeletedDocIds: ids });
+    if (serverObjectIds.length === 0) {
+      return res.json({ success: true, successIds: [] });
     }
 
-    await VirtualMachineModel.updateMany(
-      { _id: { $in: ids } },
-      { $set: { isPendingDeletion: true, deletedAt: now, updatedAt: now } },
-      { session }
+    // 🔥 ИЩЕМ ПО _id (серверному), так как фронтенд шлет sId
+    const result = await VirtualMachineModel.updateMany(
+      { _id: { $in: serverObjectIds } },
+      { $set: { isPendingDeletion: true, deletedAt: now, updatedAt: now } }
     );
 
-    const compMap = {};
-    const servMap = {};
+    console.log(`Удалено (soft delete) VM: ${result.modifiedCount}`);
 
-    vmsToDelete.forEach((vm) => {
-      if (vm.computer) {
-        const pid = vm.computer.toString();
-        if (!compMap[pid]) compMap[pid] = [];
-        compMap[pid].push(vm.__localId);
-      }
-      if (vm.server) {
-        const pid = vm.server.toString();
-        if (!servMap[pid]) servMap[pid] = [];
-        servMap[pid].push(vm.__localId);
-      }
+    // Возвращаем successIds, чтобы GenericSync понял, что удаление подтверждено
+    res.json({
+      success: true,
+      successIds: ids,
     });
-
-    const pullCompOps = Object.keys(compMap).map((pid) => ({
-      updateOne: {
-        filter: { __localId: new mongoose.Types.ObjectId(pid) },
-        update: {
-          $pullAll: { virtualMachines: compMap[pid] },
-          $set: { updatedAt: now },
-        },
-      },
-    }));
-
-    const pullServOps = Object.keys(servMap).map((pid) => ({
-      updateOne: {
-        filter: { __localId: new mongoose.Types.ObjectId(pid) },
-        update: {
-          $pullAll: { virtualMachines: servMap[pid] },
-          $set: { updatedAt: now },
-        },
-      },
-    }));
-
-    if (pullCompOps.length > 0)
-      await ComputerModel.bulkWrite(pullCompOps, { session });
-    if (pullServOps.length > 0)
-      await ServerModel.bulkWrite(pullServOps, { session });
-
-    await session.commitTransaction();
-    res.json({ success: true, successDeletedDocIds: ids });
   } catch (error) {
-    await session.abortTransaction();
     console.error("VM Delete Error:", error);
-    res.status(500).json({ message: error.message });
-  } finally {
-    session.endSession();
+    res.status(500).json({ message: "Ошибка сервера при удалении VM." });
   }
 };
 
+// --- 4. GET CHANGES ---
 export const getChanges = async (req, res) => {
   try {
     const lastSync = req.query.since ? new Date(req.query.since) : new Date(0);
-    const serverCurrentTimestamp = new Date();
+    const serverCurrentTimestamp = new Date().toISOString();
 
+    // Оптимизируем запрос: убираем $or, так как updatedAt покрывает и создание
     const allChanges = await VirtualMachineModel.find({
-      $or: [{ createdAt: { $gt: lastSync } }, { updatedAt: { $gt: lastSync } }],
-    });
+      updatedAt: { $gt: lastSync },
+    }).lean();
 
     const createdOrUpdated = allChanges.filter(
       (item) => !item.isPendingDeletion
     );
-    const deletedIds = allChanges
+
+    // 🔥 ИСПРАВЛЕНИЕ: Собираем именно __localId удаленных объектов
+    const deletedVMIds = allChanges
       .filter((item) => item.isPendingDeletion)
-      .map((item) => item._id.toHexString());
+      .map((doc) => (doc.__localId ? doc.__localId.toString() : null))
+      .filter(Boolean); // Убираем null, если вдруг затесались
 
-    const simplifiedItems = createdOrUpdated.map((item) => {
-      const itemObj = item.toObject();
-      return {
-        ...itemObj,
-        _id: item._id.toHexString(),
-        __localId: item.__localId.toHexString(),
-        computer: itemObj.computer ? itemObj.computer.toString() : null,
-        server: itemObj.server ? itemObj.server.toString() : null,
-
-        // 🔥 ИСПРАВЛЕНИЕ: Безопасная расшифровка
-        login: itemObj.login ? decrypt(itemObj.login) : "",
-        password: itemObj.password ? decrypt(itemObj.password) : "",
-      };
-    });
+    const simplifiedItems = createdOrUpdated.map((item) => ({
+      ...item,
+      _id: item._id.toString(),
+      __localId: item.__localId.toString(),
+      computer: item.computer ? item.computer.toString() : null,
+      server: item.server ? item.server.toString() : null,
+      login: item.login || "",
+      password: item.password || "",
+    }));
 
     res.json({
       createdOrUpdatedVMs: simplifiedItems,
-      deletedVMIds: deletedIds,
+      deletedVMIds, // Теперь здесь массив локальных ID (UUID/ObjectId)
       serverCurrentTimestamp,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("VM GetChanges Error:", error);
+    res.status(500).json({ message: "Не удалось получить изменения." });
   }
 };

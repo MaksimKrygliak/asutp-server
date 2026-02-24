@@ -1,62 +1,69 @@
 import mongoose from "mongoose";
 
-// Определяем SubDocumentMongooseSchema прямо здесь
-const SubDocumentMongooseSchema = new mongoose.Schema(
-  {
-    // _id: {
-    //   type: mongoose.Schema.Types.ObjectId,
-    //   default: () => new mongoose.Types.ObjectId(),
-    // },
-    equipment: { type: String, required: false },
-    Path: { type: String, required: false },
-    Name: { type: String, required: false },
-    Page: { type: String, required: false },
-    NameImg: { type: String, required: false },
-  },
-  { _id: true }
-);
+const { Schema } = mongoose;
 
-const DocSchema = new mongoose.Schema(
+// 1. Схема поддокумента (SubDocument)
+const SubDocumentSchema = new Schema({
+  equipment: { type: String, default: "" },
+  path: { type: String, default: "" },
+  name: { type: String, default: "" },
+  page: { type: String, default: "" },
+  nameImg: { type: String, default: "" },
+});
+
+// 2. Основная схема
+const QRDocumentSchema = new Schema(
   {
-    __localId: {
-      type: mongoose.Schema.Types.ObjectId,
-      unique: true,
-      required: true,
-    },
+    // idDoc - числовой ID
     idDoc: {
       type: Number,
+      required: true,
       unique: true,
-      sparse: true,
     },
-    pech: {
-      type: String,
-      required: true,
-    },
-    location: {
-      type: String,
-      required: true,
-    },
-    Enclosure: {
-      type: String,
-      default: "",
-    },
-    description: {
-      type: String,
-      default: "",
-    },
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-    isPendingDeletion: { type: Boolean, default: false }, // Флаг мягкого удаления
 
-    // ВАЖНО: Определяем 'documents' как массив объектов, соответствующих SubDocumentMongooseSchema
-    documents: [SubDocumentMongooseSchema], // <--- ВОТ ГДЕ ИЗМЕНЕНИЕ
+    // __localId для синхронизации
+    __localId: { type: String },
+
+    // Связи (References)
+    location: {
+      type: Schema.Types.ObjectId,
+      ref: "Section",
+      default: null,
+    },
+    premise: {
+      type: Schema.Types.ObjectId,
+      ref: "Premise",
+      default: null,
+    },
+    enclosure: {
+      type: Schema.Types.ObjectId,
+      ref: "EnclosureItem",
+      default: null,
+    },
+
+    description: { type: String, default: "" },
+
+    // Массив поддокументов
+    documents: [SubDocumentSchema],
+
+    isPendingDeletion: { type: Boolean, default: false },
+
+    // Автор
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+    },
   },
   {
-    timestamps: true, // createdAt, updatedAt будут автоматически добавлены Mongoose
+    timestamps: true, // Создаст createdAt и updatedAt
   }
 );
 
-export default mongoose.model("Doc", DocSchema);
+QRDocumentSchema.index({ isPendingDeletion: 1, updatedAt: -1 }); // Правильный составной для синхронизации
+QRDocumentSchema.index({ idDoc: 1 }); // У вас уже стоит unique: true, но явный индекс не помешает
+QRDocumentSchema.index({ location: 1 });
+QRDocumentSchema.index({ premise: 1 });
+QRDocumentSchema.index({ enclosure: 1 });
+
+// 🔥 ВАЖНО: Используем export default вместо module.exports
+export default mongoose.model("QRDocument", QRDocumentSchema, "docs");

@@ -5,6 +5,10 @@ import crypto from "crypto";
 import os from "os";
 import util from "util";
 import { getDriveClient, authorizeOnce } from "../utils/driveService.js";
+import NodeCache from "node-cache";
+
+const driveCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 });
+
 const readFileAsync = util.promisify(fs.readFile);
 const writeFileAsync = util.promisify(fs.writeFile);
 const pbkdf2Async = util.promisify(crypto.pbkdf2);
@@ -296,4 +300,109 @@ export async function encryptFileRNCompatible(
   });
 
   await writeFileAsync(outputPath, encryptedContent, "utf8");
+}
+
+export async function downloadDocumentByPath(req, res) {
+  try {
+    const { folderName, fileName } = req.query;
+
+    if (!folderName || !fileName) {
+      return res.status(400).send("Не указаны folderName или fileName");
+    }
+
+    const ROOT_FOLDER_ID =
+      process.env.DRIVE_ROOT_ID_ENCRYPTED ||
+      "1kAs_hnvLQY6sfwhnkSuHFA-eaGPP57e9";
+    const { drive } = await getDriveClient();
+
+    // 🔥 2. СОЗДАЕМ УНИКАЛЬНЫЙ КЛЮЧ ДЛЯ КЭША
+    const cacheKey = `file_${folderName}_${fileName}`;
+
+    // Пробуем достать ID файла и его размер из памяти
+    let fileMeta = driveCache.get(cacheKey);
+
+    // Если в кэше пусто (Cache Miss), идем искать в Google Drive
+    if (!fileMeta) {
+      console.log(
+        `[Cache Miss] Ищем ${fileName} в папке ${folderName} через Google API...`
+      );
+
+      // 1. ИЩЕМ ПАПКУ В КОРНЕ
+      const folderRes = await drive.files.list({
+        q: `'${ROOT_FOLDER_ID}' in parents and name = '${escapeQuery(
+          folderName
+        )}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+        fields: "files(id)",
+        pageSize: 1,
+        supportsAllDrives: true,
+      });
+
+      if (!folderRes.data.files || folderRes.data.files.length === 0) {
+        return res.status(404).send("Папка не найдена");
+      }
+      const targetFolderId = folderRes.data.files[0].id;
+
+      // 2. ИЩЕМ ФАЙЛ ВНУТРИ ПАПКИ
+      const fileRes = await drive.files.list({
+        q: `'${targetFolderId}' in parents and name = '${escapeQuery(
+          fileName
+        )}' and trashed = false`,
+        fields: "files(id, name, mimeType, size)",
+        pageSize: 1,
+        supportsAllDrives: true,
+      });
+
+      if (!fileRes.data.files || fileRes.data.files.length === 0) {
+        return res.status(404).send("Файл не найден");
+      }
+
+      const targetFile = fileRes.data.files[0];
+
+      // Сохраняем нужные метаданные для скачивания
+      fileMeta = {
+        id: targetFile.id,
+        name: targetFile.name,
+        mimeType: targetFile.mimeType,
+        size: targetFile.size,
+      };
+
+      // 🔥 3. ЗАПИСЫВАЕМ В КЭШ
+      driveCache.set(cacheKey, fileMeta);
+    } else {
+      console.log(
+        `[Cache Hit] Файл ${fileName} найден в памяти сервера! Скорость +100%`
+      );
+    }
+
+    // 4. ОТДАЕМ ФАЙЛ (ПОТОКОВАЯ ПЕРЕДАЧА ПО ID)
+    // Теперь мы используем fileMeta (взятый либо из кэша, либо из свежего ответа Google)
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(fileMeta.name)}`
+    );
+    res.setHeader(
+      "Content-Type",
+      fileMeta.mimeType || "application/octet-stream"
+    );
+    if (fileMeta.size) {
+      res.setHeader("Content-Length", fileMeta.size);
+    }
+
+    const driveRes = await drive.files.get(
+      { fileId: fileMeta.id, alt: "media", supportsAllDrives: true },
+      { responseType: "stream" }
+    );
+
+    driveRes.data.pipe(res);
+
+    driveRes.data.on("error", (err) => {
+      console.error("Stream error during downloadByPath:", err);
+      if (!res.headersSent) res.status(500).end("Ошибка потока данных.");
+    });
+  } catch (err) {
+    console.error("❌ Ошибка в downloadDocumentByPath:", err);
+    if (!res.headersSent) {
+      res.status(500).send("Ошибка сервера при поиске и скачивании файла.");
+    }
+  }
 }

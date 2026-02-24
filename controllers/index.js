@@ -12,3 +12,4 @@ export * as VirtualMachineController from './VirtualMachineController.js';
 export * as TerminalblocksController from './TerminalblocksController.js';
 export * as СhannelController from './СhannelController.js';
 export * as GoogleDriveController from './GoogleDriveController.js';
+export * as UPSController from './UPSController.js';

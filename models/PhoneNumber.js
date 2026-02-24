@@ -22,4 +22,7 @@ const PhoneNumberSchema = new mongoose.Schema(
   },
 );
 
+PhoneNumberSchema.index({ updatedAt: -1 }); // Если телефоны синхронизируются
+PhoneNumberSchema.index({ user: 1 });
+
 export default mongoose.model('PhoneNumber', PhoneNumberSchema);

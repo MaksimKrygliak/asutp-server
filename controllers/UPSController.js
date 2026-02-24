@@ -1,8 +1,6 @@
-import ServerModel from "../models/Server.js";
-import PremiseModel from "../models/Premise.js";
 import UpsModel from "../models/Ups.js";
+import PremiseModel from "../models/Premise.js";
 import mongoose from "mongoose";
-import { universalCascadeDelete } from "../utils/universalCascadeDelete.js";
 
 const ObjectId = mongoose.Types.ObjectId;
 
@@ -38,43 +36,21 @@ export const createBatch = async (req, res) => {
       if (p.__localId) premiseMap.set(p.__localId.toString(), p._id);
     });
 
-    // 🔥 ИСЦЕЛЕНИЕ СВЯЗЕЙ: Находим настоящие серверные _id UPS
-    const rawUpsIds = newItemsBatch.map((i) => i.ups).filter(Boolean);
-    const validUpsOids = rawUpsIds.map(toObjectId).filter(Boolean);
-
-    const upsList = await UpsModel.find(
-      {
-        $or: [
-          { _id: { $in: validUpsOids } },
-          { __localId: { $in: rawUpsIds } },
-        ],
-      },
-      "_id __localId"
-    ).lean();
-
-    const upsMap = new Map();
-    upsList.forEach((u) => {
-      upsMap.set(u._id.toString(), u._id);
-      if (u.__localId) upsMap.set(u.__localId.toString(), u._id);
-    });
-
-    // 3. Подготовка документов
+    // Подготовка документов
     const docsToInsert = newItemsBatch
       .map((item) => {
         const realPremiseId = item.premise
           ? premiseMap.get(item.premise.toString())
           : null;
-        const realUpsId = item.ups ? upsMap.get(item.ups.toString()) : null;
 
-        // Опционально: если вы не разрешаете создавать сервер без помещения
+        // Опционально: если UPS не может существовать без помещения
         // if (!realPremiseId) return null;
 
         return {
           ...item,
           _id: new ObjectId(),
           __localId: toObjectId(item.__localId),
-          premise: realPremiseId,
-          ups: realUpsId, // 100% ПРАВИЛЬНЫЙ СЕРВЕРНЫЙ ID ИЛИ NULL
+          premise: realPremiseId, // 100% ПРАВИЛЬНЫЙ СЕРВЕРНЫЙ ID
           login: item.login || "",
           password: item.password || "",
           createdAt: new Date(),
@@ -82,10 +58,10 @@ export const createBatch = async (req, res) => {
           isPendingDeletion: false,
         };
       })
-      .filter((doc) => doc !== null); // Очищаем от null, если пропускали
+      .filter((doc) => doc !== null);
 
     if (docsToInsert.length > 0) {
-      await ServerModel.insertMany(docsToInsert, { ordered: false });
+      await UpsModel.insertMany(docsToInsert, { ordered: false });
     }
 
     const successNewDocs = docsToInsert.map((doc) => ({
@@ -96,7 +72,7 @@ export const createBatch = async (req, res) => {
 
     res.json({ successNewDocs, failedNewDocs: [] });
   } catch (error) {
-    console.error("Server Create Error:", error);
+    console.error("UPS Create Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -106,10 +82,10 @@ export const updateBatch = async (req, res) => {
   try {
     const updatedItems = req.body;
     if (!Array.isArray(updatedItems) || updatedItems.length === 0) {
-      return res.status(400).json({ message: "Нет данных" });
+      return res.status(400).json({ message: "Нет данных для обновления." });
     }
 
-    // 🔥 ИСЦЕЛЕНИЕ СВЯЗЕЙ С ПОМЕЩЕНИЕМ
+    // ИСЦЕЛЕНИЕ СВЯЗЕЙ ДЛЯ ОБНОВЛЕНИЯ
     const rawPremiseIds = updatedItems.map((i) => i.premise).filter(Boolean);
     const validPremiseOids = rawPremiseIds.map(toObjectId).filter(Boolean);
 
@@ -129,26 +105,6 @@ export const updateBatch = async (req, res) => {
       if (p.__localId) premiseMap.set(p.__localId.toString(), p._id);
     });
 
-    // 🔥 ИСЦЕЛЕНИЕ СВЯЗЕЙ С UPS
-    const rawUpsIds = updatedItems.map((i) => i.ups).filter(Boolean);
-    const validUpsOids = rawUpsIds.map(toObjectId).filter(Boolean);
-
-    const upsList = await UpsModel.find(
-      {
-        $or: [
-          { _id: { $in: validUpsOids } },
-          { __localId: { $in: rawUpsIds } },
-        ],
-      },
-      "_id __localId"
-    ).lean();
-
-    const upsMap = new Map();
-    upsList.forEach((u) => {
-      upsMap.set(u._id.toString(), u._id);
-      if (u.__localId) upsMap.set(u.__localId.toString(), u._id);
-    });
-
     const bulkUpdateOps = updatedItems.map((item) => {
       const { _id, __localId, ...dataToUpdate } = item;
       const updateFields = { ...dataToUpdate, updatedAt: new Date() };
@@ -159,21 +115,20 @@ export const updateBatch = async (req, res) => {
           realPremiseId || toObjectId(dataToUpdate.premise);
       }
 
-      if (dataToUpdate.hasOwnProperty("ups")) {
-        const realUpsId = upsMap.get(dataToUpdate.ups?.toString());
-        updateFields.ups = realUpsId || toObjectId(dataToUpdate.ups);
-      }
+      if (item.login !== undefined) updateFields.login = item.login || "";
+      if (item.password !== undefined)
+        updateFields.password = item.password || "";
 
       return {
         updateOne: {
-          filter: { _id: toObjectId(_id) }, // Поиск сервера по серверному _id
+          filter: { _id: toObjectId(_id) }, // Поиск UPS по серверному ID
           update: { $set: updateFields },
         },
       };
     });
 
     if (bulkUpdateOps.length > 0) {
-      await ServerModel.bulkWrite(bulkUpdateOps);
+      await UpsModel.bulkWrite(bulkUpdateOps);
     }
 
     const successUpdatedDocs = updatedItems.map((item) => ({
@@ -184,14 +139,14 @@ export const updateBatch = async (req, res) => {
 
     res.json({ successUpdatedDocs, failedUpdatedDocs: [] });
   } catch (error) {
-    console.error("Server Update Error:", error);
+    console.error("UPS Update Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
 
-// --- 3. DELETE BATCH (УНИВЕРСАЛЬНЫЙ КАСКАД) ---
+// --- 3. DELETE BATCH (ОТКЛЮЧЕНИЕ ПИТАНИЯ) ---
 export const deleteBatch = async (req, res) => {
-  const { ids } = req.body; // Получаем серверные ID от GenericSync
+  const { ids } = req.body; // Получаем СЕРВЕРНЫЕ ID от GenericSync
 
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ message: "ids должен быть массивом." });
@@ -204,24 +159,41 @@ export const deleteBatch = async (req, res) => {
   }
 
   try {
-    // 1. Достаем __localId серверов для ответа клиенту
-    const itemsToReturn = await ServerModel.find(
+    const now = new Date();
+
+    // 1. Быстро достаем локальные ID UPS для ответа клиенту
+    const upsList = await UpsModel.find(
       { _id: { $in: validObjectIds } },
       "__localId"
     ).lean();
 
-    const localIdsToReturn = itemsToReturn
-      .map((i) => (i.__localId ? i.__localId.toString() : null))
+    const localIdsToReturn = upsList
+      .map((u) => (u.__localId ? u.__localId.toString() : null))
       .filter(Boolean);
 
-    // 2. 🔥 ВЫЗЫВАЕМ УНИВЕРСАЛЬНУЮ РЕКУРСИЮ!
-    // Она сама найдет VirtualMachine, привязанные к этому серверу, и пометит их на удаление.
-    await universalCascadeDelete("Server", validObjectIds);
+    // 2. 🔥 РАЗРЫВ СВЯЗЕЙ (ОТКЛЮЧЕНИЕ ОБОРУДОВАНИЯ ОТ UPS)
+    // Мы находим все устройства, у которых в поле ups указаны удаляемые бесперебойники, и зануляем это поле.
+    const disconnectFilter = { ups: { $in: validObjectIds } };
+    const disconnectUpdate = { $set: { ups: null, updatedAt: now } };
 
-    // Возвращаем правильный ключ successIds
+    await Promise.all([
+      mongoose.model("Computer").updateMany(disconnectFilter, disconnectUpdate),
+      mongoose.model("Server").updateMany(disconnectFilter, disconnectUpdate),
+      mongoose
+        .model("EnclosureItem")
+        .updateMany(disconnectFilter, disconnectUpdate),
+
+      // 3. Мягкое удаление самих UPS (Меняем по серверному ID)
+      UpsModel.updateMany(
+        { _id: { $in: validObjectIds } },
+        { $set: { isPendingDeletion: true, deletedAt: now, updatedAt: now } }
+      ),
+    ]);
+
+    // Возвращаем клиенту __localId
     res.json({ success: true, successIds: localIdsToReturn });
   } catch (error) {
-    console.error("Server Delete Error:", error);
+    console.error("UPS Delete Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -232,7 +204,7 @@ export const getChanges = async (req, res) => {
     const lastSync = req.query.since ? new Date(req.query.since) : new Date(0);
     const serverCurrentTimestamp = new Date().toISOString();
 
-    const allChanges = await ServerModel.find({
+    const allChanges = await UpsModel.find({
       $or: [{ createdAt: { $gt: lastSync } }, { updatedAt: { $gt: lastSync } }],
     }).lean();
 
@@ -240,7 +212,7 @@ export const getChanges = async (req, res) => {
       (item) => !item.isPendingDeletion
     );
 
-    // 🔥 ВОЗВРАЩАЕМ __localId ДЛЯ УДАЛЕННЫХ
+    // 🔥 ИСПРАВЛЕНИЕ: Возвращаем __localId вместо _id
     const deletedIds = allChanges
       .filter((item) => item.isPendingDeletion)
       .map((item) => (item.__localId ? item.__localId.toString() : null))
@@ -251,16 +223,15 @@ export const getChanges = async (req, res) => {
       _id: item._id.toString(),
       __localId: item.__localId.toString(),
       premise: item.premise ? item.premise.toString() : null,
-      ups: item.ups ? item.ups.toString() : null,
     }));
 
     res.json({
-      createdOrUpdatedServers: simplifiedItems,
-      deletedServerIds: deletedIds, // Массив локальных ID
+      createdOrUpdatedUps: simplifiedItems,
+      deletedUpsIds: deletedIds, // Массив строк с локальными ID
       serverCurrentTimestamp,
     });
   } catch (error) {
-    console.error("Server GetChanges Error:", error);
+    console.error("UPS GetChanges Error:", error);
     res.status(500).json({ message: error.message });
   }
 };

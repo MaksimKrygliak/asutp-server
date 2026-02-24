@@ -19,6 +19,7 @@ import {
   EnclosureItemController,
   ComputersController,
   ServerController,
+  UPSController,
   VirtualMachineController,
   TerminalblocksController,
   СhannelController,
@@ -70,6 +71,28 @@ cloudinary.config({
   cloud_name: cloud_name || "dhjnmoauc",
   api_key: api_key || "218662455584231",
   api_secret: api_secret || "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
+});
+
+app.post("/images/delete", checkAuth, async (req, res) => {
+  try {
+    const { public_id } = req.body;
+
+    if (!public_id) {
+      return res.status(400).json({ error: "public_id is required" });
+    }
+
+    const result = await cloudinary.uploader.destroy(public_id);
+
+    // Исправление: 'not found' - это тоже успех (файла же нет)
+    if (result.result === "ok" || result.result === "not found") {
+      res.json({ success: true, result: result.result });
+    } else {
+      res.status(400).json({ error: result.result });
+    }
+  } catch (e) {
+    console.error("Cloudinary Delete Error:", e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post("/newUpdate", checkAuth, async (req, res) => {
@@ -149,10 +172,7 @@ app.post(
   UserController.register
 );
 
-app.post(
-  "/auth/microsoft",
-  authController.auth
-);
+app.post("/auth/microsoft", authController.auth);
 
 app.get("/auth/verify/:token", UserController.verifyEmail);
 app.get("/auth/me", checkAuth, UserController.getMe);
@@ -161,7 +181,7 @@ app.get("/users", checkAuth, UserController.getAllUsers);
 app.get("/users/changes", checkAuth, UserController.getChanges);
 app.get("/users/:id", checkAuth, UserController.getUserById);
 app.patch("/users/handleClearSync", checkAuth, UserController.handleClearSync);
-app.patch("/users/batch-update",checkAuth, UserController.batchUpdateUsers);
+app.patch("/users/batch-update", checkAuth, UserController.batchUpdateUsers);
 app.patch("/users/:id", UserController.updateUserPassword);
 app.patch(
   "/users/:id/viewed-posts",
@@ -306,11 +326,11 @@ app.post("/phoneNumbers", checkAuth, PhoneNumberController.create);
 app.delete("/phoneNumbers/:id", checkAuth, PhoneNumberController.remove);
 app.patch("/phoneNumbers/:id", checkAuth, PhoneNumberController.update);
 
-app.get("/tags", checkAuth, PostController.getLastTags);
-app.get("/posts", checkAuth, PostController.getAll);
-app.get("/posts/tags", checkAuth, PostController.getLastTags);
+// app.get("/tags", checkAuth, PostController.getLastTags);
+// app.get("/posts", checkAuth, PostController.getAll);
+// app.get("/posts/tags", checkAuth, PostController.getLastTags);
 app.get("/posts/changes", checkAuth, PostController.getChanges);
-app.get("/posts/:id", checkAuth, PostController.getOne);
+// app.get("/posts/:id", checkAuth, PostController.getOne);
 app.post("/posts/batch-create", checkAuth, PostController.batchCreate);
 app.post("/posts/batch-delete", checkAuth, PostController.batchDeletePosts);
 app.patch("/posts/batch-update", checkAuth, PostController.batchUpdatePosts);
@@ -321,9 +341,9 @@ app.post("/docs/batch-create", checkAuth, DocController.batchCreate);
 app.post("/docs/batch-delete", checkAuth, DocController.batchDeleteDocs);
 app.patch("/docs/batch-update", checkAuth, DocController.batchUpdate);
 
-app.delete("/posts/:id", checkAuth, PostController.deletePost);
+// app.delete("/posts/:id", checkAuth, PostController.deletePost);
 
-app.patch("/posts/:id/view", checkAuth, PostController.markPostAsViewed);
+// app.patch("/posts/:id/view", checkAuth, PostController.markPostAsViewed);
 
 // --- МАРШРУТЫ ДЛЯ SECTIONS ---
 app.post("/sections/batch-create", checkAuth, SectionController.createBatch);
@@ -356,45 +376,26 @@ app.post(
 app.get("/enclosures/changes", checkAuth, EnclosureItemController.getChanges);
 
 // --- МАРШРУТЫ ДЛЯ Computers ---
-app.post(
-  "/computers/batch-create",
-  checkAuth,
-  ComputersController.createBatch
-);
+app.post("/computers/batch-create", checkAuth, ComputersController.createBatch);
 app.patch(
   "/computers/batch-update",
   checkAuth,
   ComputersController.updateBatch
 );
-app.post(
-  "/computers/batch-delete",
-  checkAuth,
-  ComputersController.deleteBatch
-);
+app.post("/computers/batch-delete", checkAuth, ComputersController.deleteBatch);
 app.get("/computers/changes", checkAuth, ComputersController.getChanges);
 
-
 // --- МАРШРУТЫ ДЛЯ SERVERS (Серверы) ---
-app.post(
-  "/servers/batch-create",
-  checkAuth,
-  ServerController.createBatch
-);
-app.patch(
-  "/servers/batch-update",
-  checkAuth,
-  ServerController.updateBatch
-);
-app.post(
-  "/servers/batch-delete",
-  checkAuth,
-  ServerController.deleteBatch
-);
-app.get(
-  "/servers/changes",
-  checkAuth,
-  ServerController.getChanges
-);
+app.post("/servers/batch-create", checkAuth, ServerController.createBatch);
+app.patch("/servers/batch-update", checkAuth, ServerController.updateBatch);
+app.post("/servers/batch-delete", checkAuth, ServerController.deleteBatch);
+app.get("/servers/changes", checkAuth, ServerController.getChanges);
+
+// --- МАРШРУТЫ ДЛЯ UPS (UPS) ---
+app.post("/ups/batch-create", checkAuth, UPSController.createBatch);
+app.patch("/ups/batch-update", checkAuth, UPSController.updateBatch);
+app.post("/ups/batch-delete", checkAuth, UPSController.deleteBatch);
+app.get("/ups/changes", checkAuth, UPSController.getChanges);
 
 // --- МАРШРУТЫ ДЛЯ Virtual Machines ---
 app.post(
@@ -417,7 +418,6 @@ app.get(
   checkAuth,
   VirtualMachineController.getChanges
 );
-
 
 // --- МАРШРУТЫ ДЛЯ Terminalblocks ---
 app.post(
@@ -470,6 +470,12 @@ app.get("/googleDrive/isAuthorized", checkAuth, (req, res) => {
     res.json({ authorized: false });
   }
 });
+
+app.get("/googleDrive/files", checkAuth, GoogleDriveController.getDriveContent);
+app.get("/googleDrive/download/:id", checkAuth, GoogleDriveController.downloadDocument);
+
+// 🔥 ДОБАВИТЬ ЭТУ СТРОКУ:
+app.get("/googleDrive/downloadByPath", checkAuth, GoogleDriveController.downloadDocumentByPath);
 
 // Первый OAuth вход (при отсутствии token.json)
 app.get("/oauth2callback", async (req, res) => {

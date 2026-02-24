@@ -11,25 +11,19 @@ const ServerSchema = new mongoose.Schema(
     image: { type: String },
     position: { type: Number, required: true, default: 0 },
     description: { type: String },
-
-    // Поля для шифрування
     login: { type: String },
     password: { type: String },
-
     IPaddress: { type: String },
-
-    // Батько: Приміщення
     premise: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Premise",
       required: true,
     },
-
-    // 🔥 Це реальний масив IDs. Віртуальне поле знизу ми видалили.
-    virtualMachines: [
-      { type: mongoose.Schema.Types.ObjectId, ref: "VirtualMachine" },
-    ],
-
+    ups: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Ups",
+      default: null,
+    },
     isPendingDeletion: { type: Boolean, default: false },
   },
   {
@@ -38,5 +32,16 @@ const ServerSchema = new mongoose.Schema(
     toObject: { virtuals: true },
   }
 );
+
+ServerSchema.virtual("virtualMachines", {
+  ref: "VirtualMachine",
+  localField: "_id", 
+  foreignField: "server",
+  options: { sort: { position: 1 } },
+});
+
+ServerSchema.index({ isPendingDeletion: 1, updatedAt: -1 }); // Для синхронизации
+ServerSchema.index({ premise: 1 }); // Поиск серверов в помещении
+ServerSchema.index({ ups: 1 });
 
 export default mongoose.model("Server", ServerSchema);

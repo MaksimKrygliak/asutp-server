@@ -1,26 +1,59 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-const PremiseSchema = new mongoose.Schema({
-  __localId: { type: mongoose.Schema.Types.ObjectId, required: true, unique: true },
-  title: { type: String, required: true },
-  image: { type: String },
-  position: { type: Number, required: true },
-  description: { type: String },
-  section: { type: mongoose.Schema.Types.ObjectId, ref: 'Section' }, // Родитель
-  isPendingDeletion: { type: Boolean, default: false },
+const PremiseSchema = new mongoose.Schema(
+  {
+    __localId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+      unique: true,
+    },
+    title: { type: String, required: true },
+    image: { type: String },
+    position: { type: Number, required: true, default: 0 },
+    description: { type: String },
+    section: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Section",
+      required: true,
+    },
+    isPendingDeletion: { type: Boolean, default: false },
+  },
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
+);
 
-  // 🔥 ВИПРАВЛЕННЯ: Робимо це реальними масивами, щоб контролер міг робити $addToSet
-  // Зберігаємо тут __localId дочірніх елементів (або _id, залежно від вашої логіки, але для sync краще те, що ви пушите)
-  enclosureItems: [{ type: mongoose.Schema.Types.ObjectId, ref: 'EnclosureItem' }], 
-  computers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Computer' }],
-  servers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Server' }],
-
-}, { 
-  timestamps: true,
-  // virtuals можна залишити true, це не заважає, але для масивів вони вже не потрібні
+PremiseSchema.virtual("servers", {
+  ref: "Server",
+  localField: "_id",
+  foreignField: "premise",
+  options: { sort: { position: 1 } },
 });
 
-// Віртуали видаляємо або залишаємо тільки якщо потрібна якась специфічна логіка populate по _id,
-// але для вашої поточної синхронізації краще використовувати реальні масиви.
+PremiseSchema.virtual("computers", {
+  ref: "Computer",
+  localField: "_id",
+  foreignField: "premise",
+  options: { sort: { position: 1 } },
+});
 
-export default mongoose.model('Premise', PremiseSchema);
+PremiseSchema.virtual("enclosureItems", {
+  ref: "EnclosureItem",
+  localField: "_id",
+  foreignField: "premise",
+  options: { sort: { position: 1 } },
+});
+
+PremiseSchema.virtual("ups", {
+  ref: "Ups",
+  localField: "_id",
+  foreignField: "premise",
+  options: { sort: { position: 1 } },
+});
+
+PremiseSchema.index({ isPendingDeletion: 1, updatedAt: -1 }); // Для синхронизации
+PremiseSchema.index({ section: 1 });
+
+export default mongoose.model("Premise", PremiseSchema);
