@@ -1,8 +1,7 @@
 // services/notificationService.js
 import admin from "firebase-admin";
 
-// 1. Асинхронная загрузка JSON-ключа с использованием Top-Level Await
-// Это приостановит выполнение модуля до загрузки данных.
+
 let serviceAccount;
 try {
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -72,4 +71,48 @@ export async function sendPushNotification(
 
     return { success: false, error: error.message };
   }
+}
+
+export async function sendMulticastPush(tokens, title, body, data = {}) {
+  // Разбиваем массив токенов на чанки по 500 штук (ограничение Firebase)
+  const chunkSize = 500;
+  const deadTokens = [];
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (let i = 0; i < tokens.length; i += chunkSize) {
+    const chunk = tokens.slice(i, i + chunkSize);
+
+    const message = {
+      notification: { title, body },
+      data: data,
+      tokens: chunk,
+    };
+
+    try {
+      // Используем sendEachForMulticast для пакетной отправки
+      const response = await admin.messaging().sendEachForMulticast(message);
+      successCount += response.successCount;
+      failureCount += response.failureCount;
+
+      // Ищем токены, которые больше не работают, чтобы удалить их из БД
+      if (response.failureCount > 0) {
+        response.responses.forEach((resp, idx) => {
+          if (!resp.success) {
+            const errCode = resp.error?.code;
+            if (
+              errCode === 'messaging/invalid-registration-token' ||
+              errCode === 'messaging/registration-token-not-registered'
+            ) {
+              deadTokens.push(chunk[idx]);
+            }
+          }
+        });
+      }
+    } catch (error) {
+      console.error("Ошибка при пакетной рассылке (Multicast):", error);
+    }
+  }
+
+  return { successCount, failureCount, deadTokens };
 }

@@ -72,7 +72,7 @@ const level2Permissions = [
 const level3Permissions = [
   ...level2Permissions, 
   PERMISSION_NAMES.Screen_Monitoring,
-  
+
   PERMISSION_NAMES.Notes_Edit,
   PERMISSION_NAMES.Notes_Delete,
   PERMISSION_NAMES.DocQR_Edit,
@@ -81,6 +81,23 @@ const level3Permissions = [
   PERMISSION_NAMES.PhoneNumber_Delete,
   PERMISSION_NAMES.Locations_Edit,
   PERMISSION_NAMES.Locations_Delete,
+
+  PERMISSION_NAMES.Premises_Edit,
+  PERMISSION_NAMES.Premises_Delete,
+  PERMISSION_NAMES.Enclosures_Edit,
+  PERMISSION_NAMES.Enclosures_Delete,
+  PERMISSION_NAMES.TerminalBlocks_Edit,
+  PERMISSION_NAMES.TerminalBlocks_Delete,
+  PERMISSION_NAMES.Signals_Edit,
+  PERMISSION_NAMES.Signals_Delete,
+  PERMISSION_NAMES.PC_Edit,
+  PERMISSION_NAMES.PC_Delete,
+  PERMISSION_NAMES.Servers_Edit,
+  PERMISSION_NAMES.Servers_Delete,
+  PERMISSION_NAMES.UPS_Edit,
+  PERMISSION_NAMES.UPS_Delete,
+  PERMISSION_NAMES.VirtualMachine_Edit,
+  PERMISSION_NAMES.VirtualMachine_Delete,
 ];
 
 const level4Permissions = [

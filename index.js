@@ -34,7 +34,10 @@ import {
   ALL_ROLES,
 } from "./utils/permissions.js";
 import { authorizeOnce, getAuthUrl } from "./utils/driveService.js";
-import { sendPushNotification } from "./utils/notificationService.js";
+import {
+  sendPushNotification,
+  sendMulticastPush,
+} from "./utils/notificationService.js";
 import UserModel from "./models/User.js";
 import sendMessage from "./utils/sendMessage.js";
 
@@ -49,8 +52,7 @@ const DOCUMENTS_ZIP_DOWNLOAD_URL = process.env.DOCUMENTS_ZIP_DOWNLOAD_URL;
 
 mongoose
   .connect(
-    mongoUri ||
-      "mongodb+srv://maksimkryglyk:prometey888@asutp.ofqp3js.mongodb.net/asutp"
+    mongoUri
   )
   .then(() => console.log("DB ok"))
   .catch((err) => console.log("DB error", err));
@@ -72,6 +74,106 @@ cloudinary.config({
   api_key: api_key || "218662455584231",
   api_secret: api_secret || "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
 });
+
+app.post(
+  "/notifications/send-test",
+  checkAuth,
+  verifyAdminRole,
+  async (req, res) => {
+    try {
+      const { userId, title, body, data = {} } = req.body;
+
+      if (!userId || !title || !body) {
+        return res
+          .status(400)
+          .json({ message: "Требуются userId, title и body." });
+      }
+
+      // 1. Находим пользователя и его FCM токен в базе данных
+      const user = await UserModel.findById(userId).select("fcmToken");
+
+      if (!user || !user.fcmToken) {
+        return res
+          .status(404)
+          .json({ message: "Токен для указанного пользователя не найден." });
+      }
+
+      // 2. Отправляем уведомление
+      const result = await sendPushNotification(
+        user.fcmToken,
+        title,
+        body,
+        data
+      );
+
+      if (result.success) {
+        res.status(200).json({
+          message: "Уведомление успешно отправлено.",
+          messageId: result.messageId,
+        });
+      } else {
+        res.status(500).json({
+          message: "Ошибка при отправке уведомления.",
+          error: result.error,
+        });
+      }
+    } catch (error) {
+      console.error("Ошибка в маршруте /notifications/send-test:", error);
+      res.status(500).json({ message: "Внутренняя ошибка сервера." });
+    }
+  }
+);
+
+app.post(
+  "/notifications/send-all",
+  checkAuth, // 1. Проверяем, что запрос от авторизованного юзера
+  verifyAdminRole, // 2. Проверяем, что это АДМИНИСТРАТОР
+  async (req, res) => {
+    try {
+      const { title, body, data = {} } = req.body;
+
+      if (!title || !body) {
+        return res.status(400).json({ message: "Требуются title и body." });
+      }
+
+      // 1. Ищем всех пользователей, у которых есть FCM токен
+      const usersWithTokens = await UserModel.find({
+        fcmToken: { $exists: true, $ne: "" },
+      }).select("fcmToken");
+
+      const tokens = usersWithTokens.map((user) => user.fcmToken);
+
+      if (tokens.length === 0) {
+        return res
+          .status(404)
+          .json({ message: "Нет пользователей с доступными токенами." });
+      }
+
+      // 2. Делаем массовую рассылку
+      const result = await sendMulticastPush(tokens, title, body, data);
+
+      // 3. Очищаем базу от "мертвых" токенов (оптимизация БД)
+      if (result.deadTokens.length > 0) {
+        await UserModel.updateMany(
+          { fcmToken: { $in: result.deadTokens } },
+          { $unset: { fcmToken: 1 } }
+        );
+        console.log(
+          `Удалено ${result.deadTokens.length} неактивных токенов из БД.`
+        );
+      }
+
+      res.status(200).json({
+        message: "Рассылка завершена",
+        successCount: result.successCount,
+        failureCount: result.failureCount,
+      });
+    } catch (error) {
+      console.error("Ошибка в маршруте /notifications/send-all:", error);
+      res.status(500).json({ message: "Внутренняя ошибка сервера." });
+    }
+  }
+);
 
 app.post("/images/delete", checkAuth, async (req, res) => {
   try {
@@ -171,9 +273,7 @@ app.post(
   handleValidationErrors,
   UserController.register
 );
-
 app.post("/auth/microsoft", authController.auth);
-
 app.get("/auth/verify/:token", UserController.verifyEmail);
 app.get("/auth/me", checkAuth, UserController.getMe);
 
@@ -190,6 +290,7 @@ app.patch(
 );
 app.post("/users/upload/:id/avatar", checkAuth, UserController.photoProfile);
 app.delete("/users/:id/avatar", checkAuth, UserController.deletePhotoProfile);
+
 app.get("/permissions", checkAuth, async (req, res) => {
   res.json({
     allPermissions: ALL_PERMISSIONS,
@@ -197,6 +298,7 @@ app.get("/permissions", checkAuth, async (req, res) => {
     allRoles: ALL_ROLES,
   });
 });
+
 // Маршрут для получения разрешений конкретного пользователя
 app.get("/users/:id/permissions", checkAuth, async (req, res) => {
   try {
@@ -269,95 +371,32 @@ app.post(
 );
 app.post("/user/update_push_token", checkAuth, UserController.updatePushToken);
 
-// --- НОВЫЙ МАРШРУТ ДЛЯ ТЕСТИРОВАНИЯ PUSH-УВЕДОМЛЕНИЙ (ДОСТУПЕН ТОЛЬКО АДМИНУ) ---
-app.post(
-  "/notifications/send-test",
-  checkAuth,
-  verifyAdminRole,
-  async (req, res) => {
-    try {
-      const { userId, title, body, data = {} } = req.body;
-
-      if (!userId || !title || !body) {
-        return res
-          .status(400)
-          .json({ message: "Требуются userId, title и body." });
-      }
-
-      // 1. Находим пользователя и его FCM токен в базе данных
-      const user = await UserModel.findById(userId).select("fcmToken");
-
-      if (!user || !user.fcmToken) {
-        return res
-          .status(404)
-          .json({ message: "Токен для указанного пользователя не найден." });
-      }
-
-      // 2. Отправляем уведомление
-      const result = await sendPushNotification(
-        user.fcmToken,
-        title,
-        body,
-        data
-      );
-
-      if (result.success) {
-        res.status(200).json({
-          message: "Уведомление успешно отправлено.",
-          messageId: result.messageId,
-        });
-      } else {
-        res.status(500).json({
-          message: "Ошибка при отправке уведомления.",
-          error: result.error,
-        });
-      }
-    } catch (error) {
-      console.error("Ошибка в маршруте /notifications/send-test:", error);
-      res.status(500).json({ message: "Внутренняя ошибка сервера." });
-    }
-  }
-);
-// ----------------------------------------------------------------------------------
-
 app.get("/phoneNumbers", checkAuth, PhoneNumberController.getAll);
 app.get("/phoneNumbers/:id", checkAuth, PhoneNumberController.getOne);
 app.post("/phoneNumbers", checkAuth, PhoneNumberController.create);
 app.delete("/phoneNumbers/:id", checkAuth, PhoneNumberController.remove);
 app.patch("/phoneNumbers/:id", checkAuth, PhoneNumberController.update);
 
-// app.get("/tags", checkAuth, PostController.getLastTags);
-// app.get("/posts", checkAuth, PostController.getAll);
-// app.get("/posts/tags", checkAuth, PostController.getLastTags);
 app.get("/posts/changes", checkAuth, PostController.getChanges);
-// app.get("/posts/:id", checkAuth, PostController.getOne);
 app.post("/posts/batch-create", checkAuth, PostController.batchCreate);
 app.post("/posts/batch-delete", checkAuth, PostController.batchDeletePosts);
 app.patch("/posts/batch-update", checkAuth, PostController.batchUpdatePosts);
 
 app.get("/docs/changes", checkAuth, DocController.getChanges);
-
 app.post("/docs/batch-create", checkAuth, DocController.batchCreate);
 app.post("/docs/batch-delete", checkAuth, DocController.batchDeleteDocs);
 app.patch("/docs/batch-update", checkAuth, DocController.batchUpdate);
 
-// app.delete("/posts/:id", checkAuth, PostController.deletePost);
-
-// app.patch("/posts/:id/view", checkAuth, PostController.markPostAsViewed);
-
-// --- МАРШРУТЫ ДЛЯ SECTIONS ---
 app.post("/sections/batch-create", checkAuth, SectionController.createBatch);
 app.patch("/sections/batch-update", checkAuth, SectionController.updateBatch);
 app.post("/sections/batch-delete", checkAuth, SectionController.deleteBatch);
 app.get("/sections/changes", checkAuth, SectionController.getChanges);
 
-// --- МАРШРУТЫ ДЛЯ PREMISES ---
 app.post("/premises/batch-create", checkAuth, PremiseController.createBatch);
 app.patch("/premises/batch-update", checkAuth, PremiseController.updateBatch);
 app.post("/premises/batch-delete", checkAuth, PremiseController.deleteBatch);
 app.get("/premises/changes", checkAuth, PremiseController.getChanges);
 
-// --- МАРШРУТЫ ДЛЯ ENCLOSUREITEMS ---
 app.post(
   "/enclosures/batch-create",
   checkAuth,
@@ -375,7 +414,6 @@ app.post(
 );
 app.get("/enclosures/changes", checkAuth, EnclosureItemController.getChanges);
 
-// --- МАРШРУТЫ ДЛЯ Computers ---
 app.post("/computers/batch-create", checkAuth, ComputersController.createBatch);
 app.patch(
   "/computers/batch-update",
@@ -385,19 +423,16 @@ app.patch(
 app.post("/computers/batch-delete", checkAuth, ComputersController.deleteBatch);
 app.get("/computers/changes", checkAuth, ComputersController.getChanges);
 
-// --- МАРШРУТЫ ДЛЯ SERVERS (Серверы) ---
 app.post("/servers/batch-create", checkAuth, ServerController.createBatch);
 app.patch("/servers/batch-update", checkAuth, ServerController.updateBatch);
 app.post("/servers/batch-delete", checkAuth, ServerController.deleteBatch);
 app.get("/servers/changes", checkAuth, ServerController.getChanges);
 
-// --- МАРШРУТЫ ДЛЯ UPS (UPS) ---
 app.post("/ups/batch-create", checkAuth, UPSController.createBatch);
 app.patch("/ups/batch-update", checkAuth, UPSController.updateBatch);
 app.post("/ups/batch-delete", checkAuth, UPSController.deleteBatch);
 app.get("/ups/changes", checkAuth, UPSController.getChanges);
 
-// --- МАРШРУТЫ ДЛЯ Virtual Machines ---
 app.post(
   "/virtualmachines/batch-create",
   checkAuth,
@@ -419,7 +454,6 @@ app.get(
   VirtualMachineController.getChanges
 );
 
-// --- МАРШРУТЫ ДЛЯ Terminalblocks ---
 app.post(
   "/terminalblocks/batch-create",
   checkAuth,
@@ -441,7 +475,6 @@ app.get(
   TerminalblocksController.getChanges
 );
 
-// --- МАРШРУТЫ ДЛЯ Сhannel ---
 app.post("/signals/batch-create", checkAuth, СhannelController.createBatch);
 app.patch("/signals/batch-update", checkAuth, СhannelController.updateBatch);
 app.post("/signals/batch-delete", checkAuth, СhannelController.deleteBatch);
@@ -470,14 +503,18 @@ app.get("/googleDrive/isAuthorized", checkAuth, (req, res) => {
     res.json({ authorized: false });
   }
 });
-
 app.get("/googleDrive/files", checkAuth, GoogleDriveController.getDriveContent);
-app.get("/googleDrive/download/:id", checkAuth, GoogleDriveController.downloadDocument);
+app.get(
+  "/googleDrive/download/:id",
+  checkAuth,
+  GoogleDriveController.downloadDocument
+);
+app.get(
+  "/googleDrive/downloadByPath",
+  checkAuth,
+  GoogleDriveController.downloadDocumentByPath
+);
 
-// 🔥 ДОБАВИТЬ ЭТУ СТРОКУ:
-app.get("/googleDrive/downloadByPath", checkAuth, GoogleDriveController.downloadDocumentByPath);
-
-// Первый OAuth вход (при отсутствии token.json)
 app.get("/oauth2callback", async (req, res) => {
   const code = req.query.code;
   if (!code) return res.status(400).send("Не передан параметр code");
