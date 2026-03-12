@@ -152,178 +152,86 @@ export const getChanges = async (req, res) => {
   }
 };
 
-// // --- 3. Каскадное удаление (Мягкое) ---
-// export const deleteBatch = async (req, res) => {
-//   const { ids } = req.body; // Получаем СЕРВЕРНЫЕ ID секций от клиента
+export const getSectionFullTree = async (req, res) => {
+  try {
+    const { id } = req.params;
 
-//   if (!Array.isArray(ids) || ids.length === 0) {
-//     return res.status(400).json({ message: "ids должен быть массивом." });
-//   }
+    // 1. Безопасный поиск локации (без внешней toObjectId)
+    const isValidObjectId = mongoose.Types.ObjectId.isValid(id);
+    const query = isValidObjectId
+      ? { $or: [{ _id: id }, { __localId: id }] }
+      : { __localId: id };
+    const section = await SectionModel.findOne(query).lean();
 
-//   // Фильтруем на валидные ObjectId
-//   const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
+    if (!section)
+      return res.status(404).json({ message: "Локацію не знайдено" });
 
-//   if (validIds.length === 0) {
-//     return res.json({ successIds: [], failedIds: [] });
-//   }
+    // 2. Ищем помещения
+    const premises = await PremiseModel.find({ section: section._id }).lean();
+    const premiseIds = premises.map((p) => p._id);
 
-//   try {
-//     const now = new Date();
-//     const cascadeUpdate = {
-//       $set: { isPendingDeletion: true, deletedAt: now, updatedAt: now },
-//     };
+    // 3. Ищем базовое оборудование
+    const [enclosures, computers, servers, ups] = await Promise.all([
+      EnclosureItemModel.find({ premise: { $in: premiseIds } }).lean(),
+      ComputerModel.find({ premise: { $in: premiseIds } }).lean(),
+      ServerModel.find({ premise: { $in: premiseIds } }).lean(),
+      UpsModel.find({ premise: { $in: premiseIds } }).lean(),
+    ]);
 
-//     // 0. Быстро достаем локальные ID для ответа клиенту перед каскадным удалением
-//     const sectionsToReturn = await SectionModel.find(
-//       { _id: { $in: validIds } },
-//       "__localId"
-//     ).lean();
+    // 4. Ищем вложенное оборудование (Виртуальные машины и Клеммники)
+    const computerIds = computers.map((c) => c._id);
+    const serverIds = servers.map((s) => s._id);
+    const enclosureIds = enclosures.map((e) => e._id);
 
-//     const localIdsToReturn = sectionsToReturn
-//       .map((s) => (s.__localId ? s.__localId.toString() : null))
-//       .filter(Boolean);
+    const [virtualMachines, terminalBlocks] = await Promise.all([
+      VirtualMachineModel.find({
+        $or: [
+          { computer: { $in: computerIds } },
+          { server: { $in: serverIds } },
+        ],
+      }).lean(),
+      TerminalBlockModel.find({ enclosureItem: { $in: enclosureIds } }).lean(),
+    ]);
 
-//     // 1. Находим все ПОМЕЩЕНИЯ, принадлежащие этим секциям (по _id секций)
-//     const premises = await PremiseModel.find({
-//       section: { $in: validIds }, // Ищем по серверным ID
-//     })
-//       .select("_id __localId")
-//       .lean();
+    // 5. Ищем Сигналы внутри Клеммников
+    const tbIds = terminalBlocks.map((tb) => tb._id);
+    const signals = await SignalModel.find({
+      terminalBlock: { $in: tbIds },
+    }).lean();
 
-//     const premServerIds = premises.map((p) => p._id);
-//     const premLocalIds = premises.map((p) => p.__localId.toString());
+    // 🔥 ХЕЛПЕР ДЛЯ ОЧИСТКИ (Спасаем Realm от undefined и переводим ObjectId в строки)
+    const sanitize = (items) =>
+      items.map((item) => ({
+        ...item,
+        _id: item._id?.toString(),
+        __localId: item.__localId?.toString(),
+        isWorking: item.isWorking !== undefined ? item.isWorking : true, // <-- Защита от краша Realm!
+        premise: item.premise?.toString(),
+        enclosureItem: item.enclosureItem?.toString(),
+        ups: item.ups?.toString(),
+        computer: item.computer?.toString(),
+        server: item.server?.toString(),
+        terminalBlock: item.terminalBlock?.toString(),
+      }));
 
-//     // 2. Находим ПЕРВЫЙ уровень детей помещений (Серверы, ПК, Шкафы)
-//     const [servers, computers, enclosures] = await Promise.all([
-//       ServerModel.find({ premise: { $in: premLocalIds } })
-//         .select("_id __localId")
-//         .lean(),
-//       ComputerModel.find({ premise: { $in: premLocalIds } })
-//         .select("_id __localId")
-//         .lean(),
-//       EnclosureItemModel.find({ premise: { $in: premLocalIds } })
-//         .select("_id __localId")
-//         .lean(),
-//     ]);
-
-//     const srvServerIds = servers.map((s) => s._id);
-//     const srvLocalIds = servers.map((s) => s.__localId.toString());
-//     const compServerIds = computers.map((c) => c._id);
-//     const compLocalIds = computers.map((c) => c.__localId.toString());
-//     const enclServerIds = enclosures.map((e) => e._id);
-//     const enclLocalIds = enclosures.map((e) => e.__localId.toString());
-
-//     // 3. Находим ВТОРОЙ уровень (Клеммники)
-//     const terminalBlocks = await TerminalBlockModel.find({
-//       $or: [
-//         { enclosureItem: { $in: enclServerIds } },
-//         { enclosureItem: { $in: enclLocalIds } },
-//       ],
-//     })
-//       .select("_id __localId")
-//       .lean();
-
-//     const termServerIds = terminalBlocks.map((t) => t._id);
-//     const termLocalIds = terminalBlocks.map((t) => t.__localId.toString());
-
-//     // 4. Массовое обновление всей иерархии
-//     await Promise.all([
-//       // УРОВЕНЬ 4: Сигналы
-//       SignalModel.updateMany(
-//         {
-//           $or: [
-//             { terminalBlock: { $in: termServerIds } },
-//             { terminalBlock: { $in: termLocalIds } },
-//           ],
-//           isPendingDeletion: false,
-//         },
-//         cascadeUpdate
-//       ),
-
-//       // УРОВЕНЬ 3: Виртуалки и Клеммники
-//       VirtualMachineModel.updateMany(
-//         {
-//           $or: [
-//             { server: { $in: srvServerIds } },
-//             { server: { $in: srvLocalIds } },
-//             { computer: { $in: compServerIds } },
-//             { computer: { $in: compLocalIds } },
-//           ],
-//           isPendingDeletion: false,
-//         },
-//         cascadeUpdate
-//       ),
-
-//       TerminalBlockModel.updateMany(
-//         {
-//           $or: [
-//             { enclosureItem: { $in: enclServerIds } },
-//             { enclosureItem: { $in: enclLocalIds } },
-//           ],
-//           isPendingDeletion: false,
-//         },
-//         cascadeUpdate
-//       ),
-
-//       // УРОВЕНЬ 2: Дети помещения
-//       ServerModel.updateMany({ premise: { $in: premLocalIds } }, cascadeUpdate),
-//       ComputerModel.updateMany(
-//         { premise: { $in: premLocalIds } },
-//         cascadeUpdate
-//       ),
-//       UpsModel.updateMany({ premise: { $in: premLocalIds } }, cascadeUpdate),
-//       EnclosureItemModel.updateMany(
-//         { premise: { $in: premLocalIds } },
-//         cascadeUpdate
-//       ),
-
-//       // УРОВЕНЬ 1: Помещения
-//       PremiseModel.updateMany(
-//         { section: { $in: validIds } }, // Ищем по серверным ID
-//         cascadeUpdate
-//       ),
-
-//       // УРОВЕНЬ 0: Сами секции
-//       SectionModel.updateMany({ _id: { $in: validIds } }, cascadeUpdate), // Обновляем по серверным ID
-//     ]);
-
-//     // Возвращаем локальные ID клиенту
-//     res.status(200).json({ success: true, successIds: localIdsToReturn });
-//   } catch (error) {
-//     console.error("Section Cascade Delete Error:", error);
-//     res.status(500).json({ message: "Ошибка при каскадном удалении секции." });
-//   }
-// };
-
-// // --- 4. Получение изменений ---
-// export const getChanges = async (req, res) => {
-//   const since = req.query.since ? new Date(req.query.since) : new Date(0);
-//   const serverCurrentTimestamp = new Date().toISOString();
-
-//   try {
-//     const allChanges = await SectionModel.find({
-//       $or: [{ updatedAt: { $gt: since } }, { createdAt: { $gt: since } }],
-//     }).lean();
-
-//     const createdOrUpdated = allChanges.filter((s) => !s.isPendingDeletion);
-
-//     // Возвращаем __localId для удаленных секций
-//     const deletedSectionsIds = allChanges
-//       .filter((s) => s.isPendingDeletion)
-//       .map((doc) => (doc.__localId ? doc.__localId.toString() : null))
-//       .filter(Boolean);
-
-//     res.json({
-//       createdOrUpdatedSections: createdOrUpdated.map((s) => ({
-//         ...s,
-//         _id: s._id.toString(),
-//         __localId: s.__localId.toString(),
-//       })),
-//       deletedSectionsIds, // Теперь это массив локальных ID
-//       serverCurrentTimestamp,
-//     });
-//   } catch (error) {
-//     console.error("Section GetChanges Error:", error);
-//     res.status(500).json({ message: "Ошибка сервера" });
-//   }
-// };
+    // Повертаємо повний зріз дерева
+    res.json({
+      section: {
+        ...section,
+        _id: section._id.toString(),
+        __localId: section.__localId.toString(),
+      },
+      premises: sanitize(premises),
+      enclosures: sanitize(enclosures),
+      computers: sanitize(computers),
+      servers: sanitize(servers),
+      ups: sanitize(ups),
+      virtualMachines: sanitize(virtualMachines),
+      terminalBlocks: sanitize(terminalBlocks),
+      signals: sanitize(signals),
+    });
+  } catch (error) {
+    console.error("Full Tree Error:", error);
+    res.status(500).json({ message: "Помилка сервера" });
+  }
+};

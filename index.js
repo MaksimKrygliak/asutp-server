@@ -49,7 +49,7 @@ const latest_app_version = process.env.LATEST_APP_VERSION;
 const force_update_min_version = process.env.FORCE_UPDATE_MIN_VERSION;
 const update_url_android = process.env.UPDATE_URL_ANDROID;
 const DOCUMENTS_ZIP_DOWNLOAD_URL = process.env.DOCUMENTS_ZIP_DOWNLOAD_URL;
-
+ 
 mongoose
   .connect(
     mongoUri
@@ -391,6 +391,7 @@ app.post("/sections/batch-create", checkAuth, SectionController.createBatch);
 app.patch("/sections/batch-update", checkAuth, SectionController.updateBatch);
 app.post("/sections/batch-delete", checkAuth, SectionController.deleteBatch);
 app.get("/sections/changes", checkAuth, SectionController.getChanges);
+app.get("/sections/full-tree/:id", checkAuth, SectionController.getSectionFullTree);
 
 app.post("/premises/batch-create", checkAuth, PremiseController.createBatch);
 app.patch("/premises/batch-update", checkAuth, PremiseController.updateBatch);
@@ -479,13 +480,6 @@ app.post("/signals/batch-create", checkAuth, СhannelController.createBatch);
 app.patch("/signals/batch-update", checkAuth, СhannelController.updateBatch);
 app.post("/signals/batch-delete", checkAuth, СhannelController.deleteBatch);
 app.get("/signals/changes", checkAuth, СhannelController.getChanges);
-
-app.get("/googleDrive/files", checkAuth, GoogleDriveController.getDriveContent);
-app.get(
-  "/googleDrive/download/:id",
-  checkAuth,
-  GoogleDriveController.downloadDocument
-);
 
 // Зашифровать и загрузить файл на Google Drive
 app.post(

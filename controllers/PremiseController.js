@@ -1,96 +1,119 @@
 import PremiseModel from "../models/Premise.js";
-import SectionModel from "../models/Section.js";
+import SectionModel from "../models/Section.js"; // 🔥 Обов'язково імпортуємо модель локації
 import mongoose from "mongoose";
 import { universalCascadeDelete } from "../utils/universalCascadeDelete.js";
 
 const ObjectId = mongoose.Types.ObjectId;
 
-// Хелпер для безопасной конвертации в ObjectId
+// Хелпер для безпечної конвертації в ObjectId
 const toObjectId = (val) =>
   val && mongoose.Types.ObjectId.isValid(val) ? new ObjectId(val) : null;
 
 // --- 1. CREATE BATCH ---
 export const createBatch = async (req, res) => {
   try {
-    const arrPremises = req.body;
-    if (!Array.isArray(arrPremises) || arrPremises.length === 0) {
+    const newItemsBatch = req.body;
+    if (!Array.isArray(newItemsBatch) || newItemsBatch.length === 0) {
       return res.status(400).json({ message: "Нет данных для создания." });
     }
 
-    // 1. СОБИРАЕМ ТОЛЬКО ЛОКАЛЬНЫЕ ID ЛОКАЦИЙ (СЕКЦИЙ) ИЗ ЗАПРОСА
-    const rawSectionIds = arrPremises.map((i) => i.section).filter(Boolean);
+    // 🔥 1. ЗНАХОДИМО СЕКЦІЇ ТА БУДУЄМО КАРТУ (СЛОВНИК)
+    const rawSectionIds = newItemsBatch.map((i) => i.section).filter(Boolean);
+    const validSectionOids = rawSectionIds.map(toObjectId).filter(Boolean);
 
-    // 2. ИЩЕМ ЛОКАЦИИ В БАЗЕ СТРОГО ПО __localId (БЕЗ КОНВЕРТАЦИЙ)
     const sections = await SectionModel.find(
-      { __localId: { $in: rawSectionIds } },
+      {
+        $or: [
+          { _id: { $in: validSectionOids } },
+          { __localId: { $in: rawSectionIds } },
+        ],
+      },
       "_id __localId"
     ).lean();
 
-    // 3. СТРОИМ КАРТУ: "Строковый UUID локации -> Серверный ObjectId локации"
     const sectionMap = new Map();
     sections.forEach((s) => {
+      sectionMap.set(s._id.toString(), s._id);
       if (s.__localId) sectionMap.set(s.__localId.toString(), s._id);
     });
 
-    // 4. ФОРМИРУЕМ ДОКУМЕНТЫ ДЛЯ ВСТАВКИ
-    const docsToInsert = arrPremises
-      .map((item) => {
-        // 🔥 Берем настоящий серверный ObjectId родителя из Карты
-        const realSectionId = item.section
-          ? sectionMap.get(item.section)
-          : null;
-        return {
-          ...item,
-          _id: new ObjectId(), // Генерируем новый серверный ID для помещения
-          __localId: item.__localId, // Оставляем строкой (UUID клиента)
-          section: realSectionId, // Сохраняем чистый ObjectId родительской локации!
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          isPendingDeletion: false,
-        };
-      })
-      .filter((doc) => doc.section); // Отфильтровываем "сирот" (если локация не найдена)
+    // 2. ФОРМУЄМО ДОКУМЕНТИ ДЛЯ ВСТАВКИ
+    const docsToInsert = newItemsBatch.map((item) => {
+      // 🔥 Перекладаємо локальний ID секції в серверний ObjectId
+      const realSectionId = item.section
+        ? sectionMap.get(item.section.toString())
+        : null;
 
-    // 5. МАССОВОЕ СОХРАНЕНИЕ
-    if (docsToInsert.length > 0) {
-      await PremiseModel.insertMany(docsToInsert, { ordered: false });
-    }
+      return {
+        ...item,
+        _id: new ObjectId(),
+        __localId: item.__localId,
+        section: realSectionId || toObjectId(item.section), // Підставляємо правильний ID!
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        isPendingDeletion: false,
+      };
+    });
 
-    // 6. ОТВЕТ КЛИЕНТУ
+    // 3. МАСОВЕ ЗБЕРЕЖЕННЯ
+    await PremiseModel.insertMany(docsToInsert, { ordered: false });
+
     const successNewDocs = docsToInsert.map((doc) => ({
-      __localId: doc.__localId, // Возвращаем клиенту его UUID
-      _id: doc._id.toString(), // Возвращаем клиенту новый серверный _id
+      _id: doc._id.toString(),
+      __localId: doc.__localId,
       updatedAt: doc.updatedAt,
     }));
 
-    res.status(200).json({ successNewDocs, failedNewDocs: [] });
+    res.json({ successNewDocs, failedNewDocs: [] });
   } catch (error) {
     console.error("Premise Create Error:", error);
-    res.status(500).json({ message: "Ошибка сервера при создании." });
+    res.status(500).json({ message: "Ошибка при создании помещения." });
   }
 };
 
 // --- 2. UPDATE BATCH ---
 export const updateBatch = async (req, res) => {
   try {
-    const updatedDocs = req.body;
-    if (!Array.isArray(updatedDocs) || updatedDocs.length === 0) {
-      return res.status(400).json({ message: "Нет данных." });
+    const updatedItems = req.body;
+    if (!Array.isArray(updatedItems) || updatedItems.length === 0) {
+      return res.status(400).json({ message: "Нет данных для обновления." });
     }
 
-    const bulkUpdateOps = updatedDocs.map((doc) => {
-      const { _id, __localId, section, ...fieldsToUpdate } = doc;
-      const updateData = { ...fieldsToUpdate, updatedAt: new Date() };
+    // 🔥 ЗЦІЛЕННЯ ЗВ'ЯЗКІВ ІЗ СЕКЦІЄЮ ПРИ ОНОВЛЕННІ
+    const rawSectionIds = updatedItems.map((i) => i.section).filter(Boolean);
+    const validSectionOids = rawSectionIds.map(toObjectId).filter(Boolean);
 
-      // Если пришла секция - значит это валидный серверный ID
-      if (section) {
-        updateData.section = toObjectId(section);
+    const sections = await SectionModel.find(
+      {
+        $or: [
+          { _id: { $in: validSectionOids } },
+          { __localId: { $in: rawSectionIds } },
+        ],
+      },
+      "_id __localId"
+    ).lean();
+
+    const sectionMap = new Map();
+    sections.forEach((s) => {
+      sectionMap.set(s._id.toString(), s._id);
+      if (s.__localId) sectionMap.set(s.__localId.toString(), s._id);
+    });
+
+    const bulkUpdateOps = updatedItems.map((item) => {
+      const { _id, __localId, ...dataToUpdate } = item;
+      const updateFields = { ...dataToUpdate, updatedAt: new Date() };
+
+      // 🔥 Підставляємо ObjectId секції, якщо воно є в оновленні
+      if (dataToUpdate.hasOwnProperty("section")) {
+        const realSectionId = sectionMap.get(dataToUpdate.section?.toString());
+        updateFields.section =
+          realSectionId || toObjectId(dataToUpdate.section);
       }
 
       return {
         updateOne: {
-          filter: { _id: toObjectId(_id) }, // Поиск по серверному ID
-          update: { $set: updateData },
+          filter: { _id: toObjectId(_id) },
+          update: { $set: updateFields },
         },
       };
     });
@@ -99,16 +122,16 @@ export const updateBatch = async (req, res) => {
       await PremiseModel.bulkWrite(bulkUpdateOps);
     }
 
-    const successUpdatedDocs = updatedDocs.map((doc) => ({
-      __localId: doc.__localId,
-      _id: doc._id,
+    const successUpdatedDocs = updatedItems.map((item) => ({
+      __localId: item.__localId,
+      _id: item._id,
       updatedAt: new Date(),
     }));
 
-    res.status(200).json({ successUpdatedDocs, failedUpdatedDocs: [] });
+    res.json({ successUpdatedDocs, failedUpdatedDocs: [] });
   } catch (error) {
     console.error("Premise Update Error:", error);
-    res.status(500).json({ message: "Ошибка сервера при обновлении." });
+    res.status(500).json({ message: "Ошибка при обновлении помещения." });
   }
 };
 

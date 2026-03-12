@@ -25,15 +25,23 @@ const UpsSchema = new mongoose.Schema(
     login: { type: String },
     password: { type: String },
     position: { type: Number, required: true, default: 0 },
+    enclosurePosition: { type: Number, default: 0 },
     premise: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Premise",
       required: true,
     },
+    enclosureItem: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "EnclosureItem",
+      default: null,
+    },
     isPendingDeletion: {
       type: Boolean,
       default: false,
     },
+    isWorking: { type: Boolean, default: true },
+    isWorkingDescription: { type: String },
   },
   {
     timestamps: true,
@@ -63,5 +71,6 @@ UpsSchema.virtual("poweredCabinets", {
 
 UpsSchema.index({ isPendingDeletion: 1, updatedAt: -1 }); // Для синхронизации
 UpsSchema.index({ premise: 1 });
+UpsSchema.index({ enclosureItem: 1 });
 
 export default mongoose.model("Ups", UpsSchema);

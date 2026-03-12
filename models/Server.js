@@ -10,6 +10,7 @@ const ServerSchema = new mongoose.Schema(
     title: { type: String, required: true },
     image: { type: String },
     position: { type: Number, required: true, default: 0 },
+    enclosurePosition: { type: Number, default: 0 },
     description: { type: String },
     login: { type: String },
     password: { type: String },
@@ -24,6 +25,13 @@ const ServerSchema = new mongoose.Schema(
       ref: "Ups",
       default: null,
     },
+    enclosureItem: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "EnclosureItem",
+      default: null,
+    },
+    isWorking: { type: Boolean, default: true },
+    isWorkingDescription: { type: String },
     isPendingDeletion: { type: Boolean, default: false },
   },
   {
@@ -35,7 +43,7 @@ const ServerSchema = new mongoose.Schema(
 
 ServerSchema.virtual("virtualMachines", {
   ref: "VirtualMachine",
-  localField: "_id", 
+  localField: "_id",
   foreignField: "server",
   options: { sort: { position: 1 } },
 });
@@ -43,5 +51,6 @@ ServerSchema.virtual("virtualMachines", {
 ServerSchema.index({ isPendingDeletion: 1, updatedAt: -1 }); // Для синхронизации
 ServerSchema.index({ premise: 1 }); // Поиск серверов в помещении
 ServerSchema.index({ ups: 1 });
+ServerSchema.index({ enclosureItem: 1 });
 
 export default mongoose.model("Server", ServerSchema);

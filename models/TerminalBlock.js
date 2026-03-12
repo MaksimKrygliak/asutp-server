@@ -10,8 +10,7 @@ const TerminalBlockSchema = new mongoose.Schema(
     title: { type: String, required: true },
     description: { type: String },
     position: { type: Number, required: true, default: 0 },
-
-    // Ссылка на родителя
+    enclosurePosition: { type: Number, default: 0 },
     enclosureItem: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "EnclosureItem",
@@ -27,7 +26,6 @@ const TerminalBlockSchema = new mongoose.Schema(
   }
 );
 
-// 🔥 ВИРТУАЛЬНОЕ ПОЛЕ (вместо физического массива signals)
 TerminalBlockSchema.virtual("signals", {
   ref: "Signal",
   localField: "_id",

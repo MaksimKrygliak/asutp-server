@@ -10,6 +10,7 @@ const EnclosureItemSchema = new mongoose.Schema(
     title: { type: String, required: true },
     image: { type: String },
     position: { type: Number, required: true, default: 0 },
+    IPaddress: { type: String },
     description: { type: String },
     premise: {
       type: mongoose.Schema.Types.ObjectId,
@@ -21,6 +22,8 @@ const EnclosureItemSchema = new mongoose.Schema(
       ref: "Ups",
       default: null,
     },
+    isWorking: { type: Boolean, default: true },
+    isWorkingDescription: { type: String },
     isPendingDeletion: { type: Boolean, default: false },
   },
   {
@@ -32,6 +35,20 @@ const EnclosureItemSchema = new mongoose.Schema(
 
 EnclosureItemSchema.virtual("terminalBlocks", {
   ref: "TerminalBlock",
+  localField: "_id",
+  foreignField: "enclosureItem",
+  options: { sort: { position: 1 } },
+});
+
+EnclosureItemSchema.virtual("computers", {
+  ref: "Computer",
+  localField: "_id",
+  foreignField: "enclosureItem",
+  options: { sort: { position: 1 } },
+});
+
+EnclosureItemSchema.virtual("servers", {
+  ref: "Server",
   localField: "_id",
   foreignField: "enclosureItem",
   options: { sort: { position: 1 } },

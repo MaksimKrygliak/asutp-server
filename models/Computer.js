@@ -10,6 +10,7 @@ const ComputerSchema = new mongoose.Schema(
     title: { type: String, required: true },
     image: { type: String },
     position: { type: Number, required: true, default: 0 },
+    enclosurePosition: { type: Number, default: 0 },
     description: { type: String },
     login: { type: String },
     password: { type: String },
@@ -24,6 +25,13 @@ const ComputerSchema = new mongoose.Schema(
       ref: "Ups",
       default: null,
     },
+    isWorking: { type: Boolean, default: true },
+    isWorkingDescription: { type: String },
+    enclosureItem: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "EnclosureItem",
+      default: null,
+    },
     isPendingDeletion: { type: Boolean, default: false },
   },
   {
@@ -35,7 +43,7 @@ const ComputerSchema = new mongoose.Schema(
 
 ComputerSchema.virtual("virtualMachines", {
   ref: "VirtualMachine",
-  localField: "_id", 
+  localField: "_id",
   foreignField: "computer",
   options: { sort: { position: 1 } },
 });
@@ -43,5 +51,6 @@ ComputerSchema.virtual("virtualMachines", {
 ComputerSchema.index({ isPendingDeletion: 1, updatedAt: -1 }); // Для синхронизации
 ComputerSchema.index({ premise: 1 }); // Поиск ПК в помещении
 ComputerSchema.index({ ups: 1 });
+ComputerSchema.index({ enclosureItem: 1 });
 
 export default mongoose.model("Computer", ComputerSchema);

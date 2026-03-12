@@ -1,6 +1,7 @@
 import ComputerModel from "../models/Computer.js";
 import PremiseModel from "../models/Premise.js";
-import UpsModel from "../models/Ups.js"; // Импорт для исцеления связей UPS
+import UpsModel from "../models/Ups.js";
+import EnclosureItemModel from "../models/EnclosureItem.js";
 import mongoose from "mongoose";
 import { universalCascadeDelete } from "../utils/universalCascadeDelete.js";
 
@@ -17,11 +18,8 @@ export const createBatch = async (req, res) => {
     if (!Array.isArray(newItemsBatch) || newItemsBatch.length === 0) {
       return res.status(400).json({ message: "Нет данных для создания." });
     }
-
     // 1. ИЩЕМ ПОМЕЩЕНИЯ ПО ЛОКАЛЬНЫМ ID (СТРОКАМ) И СТРОИМ КАРТУ
     const rawPremiseIds = newItemsBatch.map((i) => i.premise).filter(Boolean);
-
-    // Поиск сработает отлично, потому что база будет сравнивать строки со строками!
     const premises = await PremiseModel.find(
       { __localId: { $in: rawPremiseIds } },
       "_id __localId"
@@ -29,13 +27,11 @@ export const createBatch = async (req, res) => {
 
     const premiseMap = new Map();
     premises.forEach((p) => {
-      // Ключ: строка (UUID), Значение: настоящий серверный ObjectId
       if (p.__localId) premiseMap.set(p.__localId.toString(), p._id);
     });
 
     // 2. ИЩЕМ ИБП (UPS) И СТРОИМ КАРТУ
     const rawUpsIds = newItemsBatch.map((i) => i.ups).filter(Boolean);
-
     const upsList = await UpsModel.find(
       { __localId: { $in: rawUpsIds } },
       "_id __localId"
@@ -46,30 +42,48 @@ export const createBatch = async (req, res) => {
       if (u.__localId) upsMap.set(u.__localId.toString(), u._id);
     });
 
-    // 3. ФОРМИРУЕМ ДОКУМЕНТЫ ДЛЯ ВСТАВКИ
+    // 🔥 3. ИЩЕМ ШКАФЫ (ENCLOSURES) И СТРОИМ КАРТУ
+    const rawEnclosureIds = newItemsBatch
+      .map((i) => i.enclosureItem)
+      .filter(Boolean);
+    const enclosures = await EnclosureItemModel.find(
+      { __localId: { $in: rawEnclosureIds } },
+      "_id __localId"
+    ).lean();
+
+    const enclosureMap = new Map();
+    enclosures.forEach((e) => {
+      if (e.__localId) enclosureMap.set(e.__localId.toString(), e._id);
+    });
+
+    // 4. ФОРМИРУЕМ ДОКУМЕНТЫ ДЛЯ ВСТАВКИ
     const docsToInsert = newItemsBatch.map((item) => {
-      // 🔥 МАГИЯ КАРТЫ: мы даем ей строку item.premise, а получаем ObjectId!
       const realPremiseId = item.premise
         ? premiseMap.get(item.premise.toString())
         : null;
       const realUpsId = item.ups ? upsMap.get(item.ups.toString()) : null;
+      // 🔥 Достаем ObjectId шкафа
+      const realEnclosureId = item.enclosureItem
+        ? enclosureMap.get(item.enclosureItem.toString())
+        : null;
 
       return {
         ...item,
-        _id: new ObjectId(), // Генерируем новый серверный ID для самого ПК
-        __localId: item.__localId, // Оставляем строкой (UUID)
-        premise: realPremiseId, // Записываем чистый ObjectId помещения!
-        ups: realUpsId, // Записываем чистый ObjectId ИБП!
+        _id: new ObjectId(),
+        __localId: item.__localId,
+        premise: realPremiseId,
+        ups: realUpsId,
+        enclosureItem: realEnclosureId, // 🔥 Привязываем шкаф!
         createdAt: new Date(),
         updatedAt: new Date(),
         isPendingDeletion: false,
       };
     });
 
-    // 4. МАССОВОЕ СОХРАНЕНИЕ В БАЗУ
+    // 5. МАССОВОЕ СОХРАНЕНИЕ В БАЗУ
     await ComputerModel.insertMany(docsToInsert, { ordered: false });
 
-    // 5. ОТВЕТ КЛИЕНТУ
+    // 6. ОТВЕТ КЛИЕНТУ
     const successNewDocs = docsToInsert.map((doc) => ({
       _id: doc._id.toString(),
       __localId: doc.__localId,
@@ -94,7 +108,6 @@ export const updateBatch = async (req, res) => {
     // ИСЦЕЛЕНИЕ СВЯЗЕЙ С ПОМЕЩЕНИЕМ
     const rawPremiseIds = updatedItems.map((i) => i.premise).filter(Boolean);
     const validPremiseOids = rawPremiseIds.map(toObjectId).filter(Boolean);
-
     const premises = await PremiseModel.find(
       {
         $or: [
@@ -114,7 +127,6 @@ export const updateBatch = async (req, res) => {
     // ИСЦЕЛЕНИЕ СВЯЗЕЙ С UPS
     const rawUpsIds = updatedItems.map((i) => i.ups).filter(Boolean);
     const validUpsOids = rawUpsIds.map(toObjectId).filter(Boolean);
-
     const upsList = await UpsModel.find(
       {
         $or: [
@@ -131,6 +143,27 @@ export const updateBatch = async (req, res) => {
       if (u.__localId) upsMap.set(u.__localId.toString(), u._id);
     });
 
+    // 🔥 ИСЦЕЛЕНИЕ СВЯЗЕЙ СО ШКАФАМИ
+    const rawEnclosureIds = updatedItems
+      .map((i) => i.enclosureItem)
+      .filter(Boolean);
+    const validEnclosureOids = rawEnclosureIds.map(toObjectId).filter(Boolean);
+    const enclosuresList = await EnclosureItemModel.find(
+      {
+        $or: [
+          { _id: { $in: validEnclosureOids } },
+          { __localId: { $in: rawEnclosureIds } },
+        ],
+      },
+      "_id __localId"
+    ).lean();
+
+    const enclosureMap = new Map();
+    enclosuresList.forEach((e) => {
+      enclosureMap.set(e._id.toString(), e._id);
+      if (e.__localId) enclosureMap.set(e.__localId.toString(), e._id);
+    });
+
     const bulkUpdateOps = updatedItems.map((item) => {
       const { _id, __localId, ...dataToUpdate } = item;
       const updateFields = { ...dataToUpdate, updatedAt: new Date() };
@@ -144,6 +177,15 @@ export const updateBatch = async (req, res) => {
       if (dataToUpdate.hasOwnProperty("ups")) {
         const realUpsId = upsMap.get(dataToUpdate.ups?.toString());
         updateFields.ups = realUpsId || toObjectId(dataToUpdate.ups);
+      }
+
+      // 🔥 Подставляем ObjectId шкафа при обновлении
+      if (dataToUpdate.hasOwnProperty("enclosureItem")) {
+        const realEnclosureId = enclosureMap.get(
+          dataToUpdate.enclosureItem?.toString()
+        );
+        updateFields.enclosureItem =
+          realEnclosureId || toObjectId(dataToUpdate.enclosureItem);
       }
 
       return {
@@ -173,7 +215,7 @@ export const updateBatch = async (req, res) => {
 
 // --- 3. DELETE BATCH (УНИВЕРСАЛЬНЫЙ КАСКАД) ---
 export const deleteBatch = async (req, res) => {
-  const { ids } = req.body; // Получаем серверные ID от GenericSync
+  const { ids } = req.body;
 
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ message: "ids должен быть массивом." });
@@ -186,7 +228,6 @@ export const deleteBatch = async (req, res) => {
   }
 
   try {
-    // Достаем __localId для ответа клиенту
     const itemsToReturn = await ComputerModel.find(
       { _id: { $in: validObjectIds } },
       "__localId"
@@ -196,10 +237,8 @@ export const deleteBatch = async (req, res) => {
       .map((i) => (i.__localId ? i.__localId.toString() : null))
       .filter(Boolean);
 
-    // 🔥 МАГИЯ: Универсальное каскадное удаление (оно само найдет VirtualMachine)
     await universalCascadeDelete("Computer", validObjectIds);
 
-    // Возвращаем правильный ключ successIds
     res.json({ success: true, successIds: localIdsToReturn });
   } catch (error) {
     console.error("Computer Delete Error:", error);
@@ -221,7 +260,6 @@ export const getChanges = async (req, res) => {
       (item) => !item.isPendingDeletion
     );
 
-    // 🔥 ИСПРАВЛЕНИЕ: Возвращаем __localId вместо _id
     const deletedIds = allChanges
       .filter((item) => item.isPendingDeletion)
       .map((item) => (item.__localId ? item.__localId.toString() : null))
@@ -233,6 +271,7 @@ export const getChanges = async (req, res) => {
       __localId: item.__localId.toString(),
       premise: item.premise ? item.premise.toString() : null,
       ups: item.ups ? item.ups.toString() : null,
+      enclosureItem: item.enclosureItem ? item.enclosureItem.toString() : null, // 🔥 Возвращаем шкаф!
     }));
 
     res.json({
