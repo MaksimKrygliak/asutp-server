@@ -6,6 +6,7 @@ import transporter from "../utils/nodemailerConfig.js";
 import { v2 as cloudinary } from "cloudinary";
 import mongoose from "mongoose";
 import sendMessage from "../utils/sendMessage.js";
+import redis from "../utils/redis.js";
 const ObjectId = mongoose.Types.ObjectId;
 
 const cloud_name = process.env.CLOUD_NAME;
@@ -193,7 +194,7 @@ export const verifyEmail = async (req, res) => {
     sendMessage(
       "Новий користувач",
       `"${user.fullName}" приєднався до нас!`,
-      { 
+      {
         notificationType: "NEW_USER_VERIFIED", // Добавил более специфичный тип
         userId: user._id.toString(),
       },
@@ -246,6 +247,15 @@ export const login = async (req, res) => {
     const token = jwt.sign({ _id: user._id, role: user.role }, "secret123", {
       expiresIn: TOKEN_EXPIRATION_DATA,
     });
+
+    // 🔥 ИНТЕГРАЦИЯ REDIS: Кэшируем права юзера при успешном входе
+    try {
+      const redisKey = `user_perms:${user._id}`;
+      await redis.set(redisKey, user.permissions || [], { ex: 2592000 });
+    } catch (redisError) {
+      console.error("Ошибка записи в Redis при логине:", redisError);
+    }
+
     const { passwordHash, verificationToken, ...userData } = user._doc;
 
     res.json({ token });

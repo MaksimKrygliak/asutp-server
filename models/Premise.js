@@ -9,6 +9,7 @@ const PremiseSchema = new mongoose.Schema(
     },
     title: { type: String, required: true },
     image: { type: String },
+    imagePanoram: { type: String },
     position: { type: Number, required: true, default: 0 },
     description: { type: String },
     section: {

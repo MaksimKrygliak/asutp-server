@@ -198,7 +198,6 @@ export const getChanges = async (req, res) => {
 
     const simplifiedItems = createdOrUpdated.map(
       (item) => (
-        console.log("item.enclosureItem", item.enclosureItem),
         {
           ...item,
           _id: item._id.toString(),

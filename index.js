@@ -8,6 +8,7 @@ import {
   postCreateValidation,
 } from "./validations.js";
 import { handleValidationErrors, checkAuth } from "./utils/index.js";
+import { checkPermission } from "./utils/checkPermission.js";
 import {
   authController,
   UserController,
@@ -40,6 +41,7 @@ import {
 } from "./utils/notificationService.js";
 import UserModel from "./models/User.js";
 import sendMessage from "./utils/sendMessage.js";
+import redis from "./utils/redis.js";
 
 const mongoUri = process.env.MONGODB_URI;
 const cloud_name = process.env.CLOUD_NAME;
@@ -50,6 +52,7 @@ const force_update_min_version = process.env.FORCE_UPDATE_MIN_VERSION;
 const update_url_android = process.env.UPDATE_URL_ANDROID;
 const DOCUMENTS_ZIP_DOWNLOAD_URL = process.env.DOCUMENTS_ZIP_DOWNLOAD_URL;
  
+
 mongoose
   .connect(
     mongoUri
@@ -281,8 +284,8 @@ app.get("/users", checkAuth, UserController.getAllUsers);
 app.get("/users/changes", checkAuth, UserController.getChanges);
 app.get("/users/:id", checkAuth, UserController.getUserById);
 app.patch("/users/handleClearSync", checkAuth, UserController.handleClearSync);
-app.patch("/users/batch-update", checkAuth, UserController.batchUpdateUsers);
-app.patch("/users/:id", UserController.updateUserPassword);
+app.patch("/users/batch-update", checkAuth, checkPermission("Users_Edit"), UserController.batchUpdateUsers);
+app.patch("/users/:id", checkAuth, UserController.updateUserPassword);
 app.patch(
   "/users/:id/viewed-posts",
   checkAuth,
@@ -324,169 +327,120 @@ app.get("/users/:id/permissions", checkAuth, async (req, res) => {
 // Маршрут для обновления разрешений конкретного пользователя
 app.patch("/users/:id/permissions", checkAuth, async (req, res) => {
   try {
-    // Только администратор может менять разрешения других пользователей
     if (req.user.role !== "администратор") {
-      return res
-        .status(403)
-        .json({ message: "Доступ запрещен. Требуются права администратора." });
+      return res.status(403).json({ message: "Доступ запрещен." });
     }
 
     const { permissions } = req.body;
+    const targetUserId = req.params.id;
 
-    // Валидация: убедитесь, что присланные разрешения существуют в ALL_PERMISSIONS
+    if (!Array.isArray(permissions)) {
+      return res.status(400).json({ message: "Дозволи мають бути масивом." });
+    }
+    
+    // Получаем массив только из названий валидных прав
     const validPermissions = ALL_PERMISSIONS.map((p) => p.name);
+    
+    // Ищем те права, которые прислал клиент, но которых нет в нашем списке
     const invalidPermissions = permissions.filter(
       (p) => !validPermissions.includes(p)
     );
+    
     if (invalidPermissions.length > 0) {
       return res.status(400).json({
-        message: `Неверные разрешения: ${invalidPermissions.join(", ")}`,
+        message: `Недійсні дозволи: ${invalidPermissions.join(", ")}`,
       });
     }
 
-    const user = await UserModel.findById(req.params.id);
+    const user = await UserModel.findById(targetUserId);
     if (!user) {
       return res.status(404).json({ message: "Пользователь не найден." });
     }
 
-    user.permissions = permissions; // Обновляем массив разрешений
-    user.updatedAt = new Date(); // Обновляем дату изменения
+    user.permissions = permissions;
+    user.updatedAt = new Date();
     await user.save();
 
+    // 🔥 САМОЕ ВАЖНОЕ: Мгновенно обновляем кэш в Redis
+    const redisKey = `user_perms:${req.params.id}`;
+    await redis.set(redisKey, permissions, { ex: 86400 });
+
     res.json({
-      message: "Разрешения пользователя успешно обновлены.",
+      message: "Разрешения успешно обновлены.",
       permissions: user.permissions,
     });
   } catch (error) {
     console.error(error);
-    res
-      .status(500)
-      .json({ message: "Ошибка сервера при обновлении разрешений." });
+    res.status(500).json({ message: "Ошибка сервера." });
   }
 });
-app.post(
-  "/user/update_app_version",
-  checkAuth,
-  UserController.updateAppVersion
-);
+app.post("/user/update_app_version", checkAuth, UserController.updateAppVersion);
 app.post("/user/update_push_token", checkAuth, UserController.updatePushToken);
 
 app.get("/phoneNumbers", checkAuth, PhoneNumberController.getAll);
 app.get("/phoneNumbers/:id", checkAuth, PhoneNumberController.getOne);
-app.post("/phoneNumbers", checkAuth, PhoneNumberController.create);
-app.delete("/phoneNumbers/:id", checkAuth, PhoneNumberController.remove);
-app.patch("/phoneNumbers/:id", checkAuth, PhoneNumberController.update);
+app.post("/phoneNumbers", checkAuth, checkPermission("PhoneNumber_Edit"), PhoneNumberController.create);
+app.patch("/phoneNumbers/:id", checkAuth, checkPermission("PhoneNumber_Edit"), PhoneNumberController.update);
+app.delete("/phoneNumbers/:id", checkAuth, checkPermission("PhoneNumber_Delete"), PhoneNumberController.remove);
 
+app.post("/posts/batch-create", checkAuth, checkPermission("Notes_Edit"), PostController.batchCreate);
+app.patch("/posts/batch-update", checkAuth, checkPermission("Notes_Edit"), PostController.batchUpdatePosts);
+app.post("/posts/batch-delete", checkAuth, checkPermission("Notes_Delete"), PostController.batchDeletePosts);
 app.get("/posts/changes", checkAuth, PostController.getChanges);
-app.post("/posts/batch-create", checkAuth, PostController.batchCreate);
-app.post("/posts/batch-delete", checkAuth, PostController.batchDeletePosts);
-app.patch("/posts/batch-update", checkAuth, PostController.batchUpdatePosts);
 
+app.post("/docs/batch-create", checkAuth, checkPermission("DocQR_Edit"), DocController.batchCreate);
+app.patch("/docs/batch-update", checkAuth, checkPermission("DocQR_Edit"), DocController.batchUpdate);
+app.post("/docs/batch-delete", checkAuth, checkPermission("DocQR_Delete"), DocController.batchDeleteDocs);
 app.get("/docs/changes", checkAuth, DocController.getChanges);
-app.post("/docs/batch-create", checkAuth, DocController.batchCreate);
-app.post("/docs/batch-delete", checkAuth, DocController.batchDeleteDocs);
-app.patch("/docs/batch-update", checkAuth, DocController.batchUpdate);
 
-app.post("/sections/batch-create", checkAuth, SectionController.createBatch);
-app.patch("/sections/batch-update", checkAuth, SectionController.updateBatch);
-app.post("/sections/batch-delete", checkAuth, SectionController.deleteBatch);
+app.post("/sections/batch-create", checkAuth, checkPermission("Locations_Edit"), SectionController.createBatch);
+app.patch("/sections/batch-update", checkAuth, checkPermission("Locations_Edit"), SectionController.updateBatch);
+app.post("/sections/batch-delete", checkAuth, checkPermission("Locations_Delete"), SectionController.deleteBatch);
 app.get("/sections/changes", checkAuth, SectionController.getChanges);
 app.get("/sections/full-tree/:id", checkAuth, SectionController.getSectionFullTree);
 
-app.post("/premises/batch-create", checkAuth, PremiseController.createBatch);
-app.patch("/premises/batch-update", checkAuth, PremiseController.updateBatch);
-app.post("/premises/batch-delete", checkAuth, PremiseController.deleteBatch);
+app.post("/premises/batch-create", checkAuth, checkPermission("Premises_Edit"), PremiseController.createBatch);
+app.patch("/premises/batch-update", checkAuth, checkPermission("Premises_Edit"), PremiseController.updateBatch);
+app.post("/premises/batch-delete", checkAuth, checkPermission("Premises_Delete"), PremiseController.deleteBatch);
 app.get("/premises/changes", checkAuth, PremiseController.getChanges);
 
-app.post(
-  "/enclosures/batch-create",
-  checkAuth,
-  EnclosureItemController.createBatch
-);
-app.patch(
-  "/enclosures/batch-update",
-  checkAuth,
-  EnclosureItemController.updateBatch
-);
-app.post(
-  "/enclosures/batch-delete",
-  checkAuth,
-  EnclosureItemController.deleteBatch
-);
+app.post("/enclosures/batch-create", checkAuth, checkPermission("Enclosures_Edit"), EnclosureItemController.createBatch );
+app.patch("/enclosures/batch-update", checkAuth, checkPermission("Enclosures_Edit"), EnclosureItemController.updateBatch );
+app.post("/enclosures/batch-delete", checkAuth, checkPermission("Enclosures_Delete"), EnclosureItemController.deleteBatch );
 app.get("/enclosures/changes", checkAuth, EnclosureItemController.getChanges);
 
-app.post("/computers/batch-create", checkAuth, ComputersController.createBatch);
-app.patch(
-  "/computers/batch-update",
-  checkAuth,
-  ComputersController.updateBatch
-);
-app.post("/computers/batch-delete", checkAuth, ComputersController.deleteBatch);
+app.post("/computers/batch-create", checkAuth, checkPermission("PC_Edit"), ComputersController.createBatch);
+app.patch("/computers/batch-update", checkAuth, checkPermission("PC_Edit"), ComputersController.updateBatch);
+app.post("/computers/batch-delete", checkAuth, checkPermission("PC_Delete"), ComputersController.deleteBatch);
 app.get("/computers/changes", checkAuth, ComputersController.getChanges);
 
-app.post("/servers/batch-create", checkAuth, ServerController.createBatch);
-app.patch("/servers/batch-update", checkAuth, ServerController.updateBatch);
-app.post("/servers/batch-delete", checkAuth, ServerController.deleteBatch);
+app.post("/servers/batch-create", checkAuth, checkPermission("Servers_Edit"), ServerController.createBatch);
+app.patch("/servers/batch-update", checkAuth, checkPermission("Servers_Edit"), ServerController.updateBatch);
+app.post("/servers/batch-delete", checkAuth, checkPermission("Servers_Delete"), ServerController.deleteBatch);
 app.get("/servers/changes", checkAuth, ServerController.getChanges);
 
-app.post("/ups/batch-create", checkAuth, UPSController.createBatch);
-app.patch("/ups/batch-update", checkAuth, UPSController.updateBatch);
-app.post("/ups/batch-delete", checkAuth, UPSController.deleteBatch);
+app.post("/ups/batch-create", checkAuth, checkPermission("UPS_Edit"), UPSController.createBatch);
+app.patch("/ups/batch-update", checkAuth, checkPermission("UPS_Edit"), UPSController.updateBatch);
+app.post("/ups/batch-delete", checkAuth, checkPermission("UPS_Delete"), UPSController.deleteBatch);
 app.get("/ups/changes", checkAuth, UPSController.getChanges);
 
-app.post(
-  "/virtualmachines/batch-create",
-  checkAuth,
-  VirtualMachineController.createBatch
-);
-app.patch(
-  "/virtualmachines/batch-update",
-  checkAuth,
-  VirtualMachineController.updateBatch
-);
-app.post(
-  "/virtualmachines/batch-delete",
-  checkAuth,
-  VirtualMachineController.deleteBatch
-);
-app.get(
-  "/virtualmachines/changes",
-  checkAuth,
-  VirtualMachineController.getChanges
-);
+app.post("/virtualmachines/batch-create", checkAuth, checkPermission("VirtualMachine_Edit"), VirtualMachineController.createBatch);
+app.patch("/virtualmachines/batch-update", checkAuth, checkPermission("VirtualMachine_Edit"), VirtualMachineController.updateBatch);
+app.post("/virtualmachines/batch-delete", checkAuth, checkPermission("VirtualMachine_Delete"), VirtualMachineController.deleteBatch);
+app.get("/virtualmachines/changes", checkAuth, VirtualMachineController.getChanges);
 
-app.post(
-  "/terminalblocks/batch-create",
-  checkAuth,
-  TerminalblocksController.createBatch
-);
-app.patch(
-  "/terminalblocks/batch-update",
-  checkAuth,
-  TerminalblocksController.updateBatch
-);
-app.post(
-  "/terminalblocks/batch-delete",
-  checkAuth,
-  TerminalblocksController.deleteBatch
-);
-app.get(
-  "/terminalblocks/changes",
-  checkAuth,
-  TerminalblocksController.getChanges
-);
+app.post("/terminalblocks/batch-create", checkAuth, checkPermission("TerminalBlocks_Edit"), TerminalblocksController.createBatch);
+app.patch("/terminalblocks/batch-update", checkAuth, checkPermission("TerminalBlocks_Edit"), TerminalblocksController.updateBatch);
+app.post("/terminalblocks/batch-delete", checkAuth, checkPermission("TerminalBlocks_Delete"), TerminalblocksController.deleteBatch);
+app.get("/terminalblocks/changes", checkAuth, TerminalblocksController.getChanges);
 
-app.post("/signals/batch-create", checkAuth, СhannelController.createBatch);
-app.patch("/signals/batch-update", checkAuth, СhannelController.updateBatch);
-app.post("/signals/batch-delete", checkAuth, СhannelController.deleteBatch);
+app.post("/signals/batch-create", checkAuth, checkPermission("Signals_Edit"), СhannelController.createBatch);
+app.patch("/signals/batch-update", checkAuth, checkPermission("Signals_Edit"), СhannelController.updateBatch);
+app.post("/signals/batch-delete", checkAuth, checkPermission("Signals_Delete"), СhannelController.deleteBatch);
 app.get("/signals/changes", checkAuth, СhannelController.getChanges);
 
 // Зашифровать и загрузить файл на Google Drive
-app.post(
-  "/googleDrive/encryptAndUpload",
-  checkAuth,
-  GoogleDriveController.encryptAndUploadDocument
-);
+app.post("/googleDrive/encryptAndUpload", checkAuth, GoogleDriveController.encryptAndUploadDocument);
 
 // Проверка авторизации (удобно для клиента)
 app.get("/googleDrive/isAuthorized", checkAuth, (req, res) => {

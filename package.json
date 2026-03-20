@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@upstash/redis": "^1.37.0",
     "axios": "^1.13.2",
     "bcrypt": "5.0.1",
     "cloudinary": "2.6.0",
