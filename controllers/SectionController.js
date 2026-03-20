@@ -166,37 +166,70 @@ export const getSectionFullTree = async (req, res) => {
     if (!section)
       return res.status(404).json({ message: "Локацію не знайдено" });
 
-    // 2. Ищем помещения
-    const premises = await PremiseModel.find({ section: section._id }).lean();
+    // 🔥 2. СУПЕР-ПОШУК ПРИМІЩЕНЬ (ПІДТРИМКА СТАРИХ І НОВИХ ДАНИХ)
+    const premises = await PremiseModel.find({
+      $or: [
+        { section: section._id }, // Новий стандарт
+        { section: section.__localId }, // Якщо раптом збереглося по локальному ID
+        { _id: { $in: section.premises || [] } } // СТАРИЙ СТАНДАРТ (ID лежать всередині масиву секції)
+      ]
+    }).lean();
+    
     const premiseIds = premises.map((p) => p._id);
+    const premiseLocalIds = premises.map((p) => p.__localId).filter(Boolean); // Збираємо і локальні ID для надійності
 
-    // 3. Ищем базовое оборудование
+    // 3. Ищем базовое оборудование (теж робимо більш надійним)
     const [enclosures, computers, servers, ups] = await Promise.all([
-      EnclosureItemModel.find({ premise: { $in: premiseIds } }).lean(),
-      ComputerModel.find({ premise: { $in: premiseIds } }).lean(),
-      ServerModel.find({ premise: { $in: premiseIds } }).lean(),
-      UpsModel.find({ premise: { $in: premiseIds } }).lean(),
+      EnclosureItemModel.find({ 
+        $or: [{ premise: { $in: premiseIds } }, { premise: { $in: premiseLocalIds } }] 
+      }).lean(),
+      ComputerModel.find({ 
+        $or: [{ premise: { $in: premiseIds } }, { premise: { $in: premiseLocalIds } }] 
+      }).lean(),
+      ServerModel.find({ 
+        $or: [{ premise: { $in: premiseIds } }, { premise: { $in: premiseLocalIds } }] 
+      }).lean(),
+      UpsModel.find({ 
+        $or: [{ premise: { $in: premiseIds } }, { premise: { $in: premiseLocalIds } }] 
+      }).lean(),
     ]);
 
     // 4. Ищем вложенное оборудование (Виртуальные машины и Клеммники)
     const computerIds = computers.map((c) => c._id);
+    const computerLocalIds = computers.map((c) => c.__localId).filter(Boolean);
+    
     const serverIds = servers.map((s) => s._id);
+    const serverLocalIds = servers.map((s) => s.__localId).filter(Boolean);
+    
     const enclosureIds = enclosures.map((e) => e._id);
+    const enclosureLocalIds = enclosures.map((e) => e.__localId).filter(Boolean);
 
     const [virtualMachines, terminalBlocks] = await Promise.all([
       VirtualMachineModel.find({
         $or: [
           { computer: { $in: computerIds } },
+          { computer: { $in: computerLocalIds } },
           { server: { $in: serverIds } },
+          { server: { $in: serverLocalIds } },
         ],
       }).lean(),
-      TerminalBlockModel.find({ enclosureItem: { $in: enclosureIds } }).lean(),
+      TerminalBlockModel.find({ 
+        $or: [
+          { enclosureItem: { $in: enclosureIds } },
+          { enclosureItem: { $in: enclosureLocalIds } }
+        ]
+      }).lean(),
     ]);
 
-    // 5. Ищем Сигналы внутри Клеммников
+    // 5. Ищем Сигналы внутри Клеммников (С УЧЕТОМ СТАРЫХ ID)
     const tbIds = terminalBlocks.map((tb) => tb._id);
+    const tbLocalIds = terminalBlocks.map((tb) => tb.__localId).filter(Boolean);
+
     const signals = await SignalModel.find({
-      terminalBlock: { $in: tbIds },
+      $or: [
+        { terminalBlock: { $in: tbIds } },
+        { terminalBlock: { $in: tbLocalIds } }
+      ]
     }).lean();
 
     // 🔥 ХЕЛПЕР ДЛЯ ОЧИСТКИ (Спасаем Realm от undefined и переводим ObjectId в строки)
