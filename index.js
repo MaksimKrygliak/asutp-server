@@ -53,7 +53,7 @@ const update_url_android = process.env.UPDATE_URL_ANDROID;
 const DOCUMENTS_ZIP_DOWNLOAD_URL = process.env.DOCUMENTS_ZIP_DOWNLOAD_URL;
  
 
-mongoose
+mongoose 
   .connect(
     mongoUri
   )
@@ -78,8 +78,7 @@ cloudinary.config({
   api_secret: api_secret || "ykr5JYbYBDOZDFc82Zs2eLUwcFQ",
 });
 
-app.post(
-  "/notifications/send-test",
+app.post("/notifications/send-test",
   checkAuth,
   verifyAdminRole,
   async (req, res) => {
@@ -127,8 +126,7 @@ app.post(
   }
 );
 
-app.post(
-  "/notifications/send-all",
+app.post("/notifications/send-all",
   checkAuth, // 1. Проверяем, что запрос от авторизованного юзера
   verifyAdminRole, // 2. Проверяем, что это АДМИНИСТРАТОР
   async (req, res) => {
@@ -177,6 +175,28 @@ app.post(
     }
   }
 );
+
+app.post("/images/upload", checkAuth, async (req, res) => {
+  try {
+    if (!req.files || !req.files.image) {
+      return res.status(400).json({ error: "Файл зображення не знайдено" });
+    }
+
+    const imageFile = req.files.image;
+    const folderName = req.body.folder || "general";
+
+    const result = await cloudinary.uploader.upload(imageFile.tempFilePath, {
+      folder: folderName,
+      resource_type: "auto",
+    });
+
+    // Повертаємо клієнту успішний результат з ID
+    res.status(200).json({ public_id: result.public_id });
+  } catch (error) {
+    console.error("Cloudinary Upload Error:", error);
+    res.status(500).json({ error: "Помилка сервера при збереженні зображення" });
+  }
+});
 
 app.post("/images/delete", checkAuth, async (req, res) => {
   try {

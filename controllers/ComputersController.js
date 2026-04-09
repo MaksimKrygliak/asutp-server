@@ -4,6 +4,7 @@ import UpsModel from "../models/Ups.js";
 import EnclosureItemModel from "../models/EnclosureItem.js";
 import mongoose from "mongoose";
 import { universalCascadeDelete } from "../utils/universalCascadeDelete.js";
+import { deleteOldCloudinaryImage } from "../utils/cloudinaryHelper.js";
 
 const ObjectId = mongoose.Types.ObjectId;
 
@@ -103,6 +104,40 @@ export const updateBatch = async (req, res) => {
     const updatedItems = req.body;
     if (!Array.isArray(updatedItems) || updatedItems.length === 0) {
       return res.status(400).json({ message: "Нет данных для обновления." });
+    }
+
+    // 🔥 ДОБАВЛЕНО: 1. Вытаскиваем старые версии ПК из базы (только поле image)
+    const itemIds = updatedItems.map((i) => i._id).filter(Boolean);
+    const existingItems = await ComputerModel.find(
+      { _id: { $in: itemIds.map(toObjectId) } },
+      "image"
+    ).lean();
+
+    const existingImagesMap = new Map();
+    existingItems.forEach((item) => {
+      existingImagesMap.set(item._id.toString(), item.image);
+    });
+
+    // 🔥 ДОБАВЛЕНО: 2. Сравниваем картинки и собираем промисы на удаление
+    const imagesToDeletePromises = [];
+
+    for (const incomingItem of updatedItems) {
+      if (!incomingItem._id) continue;
+
+      const oldImage = existingImagesMap.get(incomingItem._id.toString());
+      const newImage = incomingItem.image;
+
+      // Если была картинка и она изменилась (или была удалена пользователем)
+      if (oldImage && oldImage !== newImage) {
+        imagesToDeletePromises.push(deleteOldCloudinaryImage(oldImage));
+      }
+    }
+
+    // Запускаем фоновое удаление старых картинок из Cloudinary
+    if (imagesToDeletePromises.length > 0) {
+      await Promise.all(
+        imagesToDeletePromises.map((p) => p.catch(console.error))
+      );
     }
 
     // ИСЦЕЛЕНИЕ СВЯЗЕЙ С ПОМЕЩЕНИЕМ
@@ -228,14 +263,31 @@ export const deleteBatch = async (req, res) => {
   }
 
   try {
+    // 🔥 ДОБАВЛЕНО: Запрашиваем из базы не только __localId, но и image
     const itemsToReturn = await ComputerModel.find(
       { _id: { $in: validObjectIds } },
-      "__localId"
+      "__localId image"
     ).lean();
 
-    const localIdsToReturn = itemsToReturn
-      .map((i) => (i.__localId ? i.__localId.toString() : null))
-      .filter(Boolean);
+    const localIdsToReturn = [];
+    const imagesToDeletePromises = [];
+
+    // 🔥 ДОБАВЛЕНО: Собираем локальные ID для ответа и картинки для очистки Cloudinary
+    itemsToReturn.forEach((item) => {
+      if (item.__localId) {
+        localIdsToReturn.push(item.__localId.toString());
+      }
+      if (item.image) {
+        imagesToDeletePromises.push(deleteOldCloudinaryImage(item.image));
+      }
+    });
+
+    // Отправляем запрос на удаление картинок параллельно
+    if (imagesToDeletePromises.length > 0) {
+      await Promise.all(
+        imagesToDeletePromises.map((p) => p.catch(console.error))
+      );
+    }
 
     await universalCascadeDelete("Computer", validObjectIds);
 

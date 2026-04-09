@@ -4,6 +4,10 @@ import mongoose from "mongoose";
 
 const ObjectId = mongoose.Types.ObjectId;
 
+// Хелпер для безопасной конвертации в ObjectId
+const toObjectId = (val) =>
+  val && mongoose.Types.ObjectId.isValid(val) ? new ObjectId(val) : null;
+
 // --- 1. CREATE BATCH ---
 export const createBatch = async (req, res) => {
   try {
@@ -14,28 +18,33 @@ export const createBatch = async (req, res) => {
         .json({ message: "Нет данных для создания сигналов." });
     }
 
-    // Собираем локальные ID родительских клеммников
-    const localTerminalIds = [
-      ...new Set(newItemsBatch.map((i) => i.terminalBlock).filter((id) => id)),
+    // Собираем ID родительских клеммников (это могут быть как серверные _id, так и __localId)
+    const rawTerminalIds = [
+      ...new Set(newItemsBatch.map((i) => i.terminalBlock).filter(Boolean)),
     ];
+    const validTerminalOids = rawTerminalIds.map(toObjectId).filter(Boolean);
 
-    // Находим серверные _id родителей
+    // 🔥 ИСЦЕЛЕНИЕ СВЯЗЕЙ: Находим серверные _id родителей по ОБЕИМ колонкам
     const foundTerminals = await TerminalBlockModel.find({
-      __localId: { $in: localTerminalIds.map((id) => new ObjectId(id)) },
+      $or: [
+        { _id: { $in: validTerminalOids } },
+        { __localId: { $in: validTerminalOids } },
+      ],
     })
       .select("_id __localId")
       .lean();
 
-    const terminalMap = foundTerminals.reduce((map, t) => {
-      map[t.__localId.toString()] = t._id;
-      return map;
-    }, {});
+    // Создаем универсальную карту
+    const terminalMap = new Map();
+    foundTerminals.forEach((t) => {
+      terminalMap.set(t._id.toString(), t._id);
+      if (t.__localId) terminalMap.set(t.__localId.toString(), t._id);
+    });
 
     // Подготовка документов для вставки
     const docsToInsert = newItemsBatch
       .map((item) => {
-        // 🔥 ИСПРАВЛЕНИЕ: Обязательно .toString(), так как ключи в мапе — строки
-        const parentServerId = terminalMap[item.terminalBlock?.toString()];
+        const parentServerId = terminalMap.get(item.terminalBlock?.toString());
 
         if (!parentServerId) {
           console.warn(`Клеммник для сигнала ${item.__localId} не найден.`);
@@ -45,8 +54,8 @@ export const createBatch = async (req, res) => {
         return {
           ...item,
           _id: new ObjectId(),
-          __localId: new ObjectId(item.__localId),
-          terminalBlock: parentServerId, // Привязка по серверному _id
+          __localId: toObjectId(item.__localId),
+          terminalBlock: parentServerId, // Привязка по 100% правильному серверному _id
           createdAt: new Date(),
           updatedAt: new Date(),
           isPendingDeletion: false,
@@ -79,21 +88,42 @@ export const updateBatch = async (req, res) => {
       return res.status(400).json({ message: "Нет данных для обновления." });
     }
 
+    // Делаем такую же страховку связей для обновления
+    const rawTerminalIds = updatedItems
+      .map((i) => i.terminalBlock)
+      .filter(Boolean);
+    const validTerminalOids = rawTerminalIds.map(toObjectId).filter(Boolean);
+
+    const foundTerminals = await TerminalBlockModel.find({
+      $or: [
+        { _id: { $in: validTerminalOids } },
+        { __localId: { $in: validTerminalOids } },
+      ],
+    })
+      .select("_id __localId")
+      .lean();
+
+    const terminalMap = new Map();
+    foundTerminals.forEach((t) => {
+      terminalMap.set(t._id.toString(), t._id);
+      if (t.__localId) terminalMap.set(t.__localId.toString(), t._id);
+    });
+
     const bulkUpdateOps = updatedItems.map((item) => {
       const { _id, __localId, ...dataToUpdate } = item;
-
-      const updateFields = {
-        ...dataToUpdate,
-        updatedAt: new Date(),
-      };
+      const updateFields = { ...dataToUpdate, updatedAt: new Date() };
 
       if (dataToUpdate.terminalBlock) {
-        updateFields.terminalBlock = new ObjectId(dataToUpdate.terminalBlock);
+        const realTerminalId = terminalMap.get(
+          dataToUpdate.terminalBlock?.toString()
+        );
+        updateFields.terminalBlock =
+          realTerminalId || toObjectId(dataToUpdate.terminalBlock);
       }
 
       return {
         updateOne: {
-          filter: { _id: new ObjectId(_id) },
+          filter: { _id: toObjectId(_id) },
           update: { $set: updateFields },
         },
       };
@@ -116,9 +146,8 @@ export const updateBatch = async (req, res) => {
   }
 };
 
-// --- 3. DELETE BATCH (Мягкое удаление по localIds) ---
+// --- 3. DELETE BATCH (Мягкое удаление) ---
 export const deleteBatch = async (req, res) => {
-  // 🔥 ИСПРАВЛЕНИЕ: Ожидаем localIds от фронтенда
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ message: "ids должен быть массивом." });
@@ -126,15 +155,13 @@ export const deleteBatch = async (req, res) => {
 
   try {
     const now = new Date();
-    // Преобразуем в ObjectId для корректного поиска
-    const localObjectIds = ids.map((id) => new ObjectId(id));
+    const localObjectIds = ids.map(toObjectId).filter(Boolean);
 
     await SignalModel.updateMany(
       { _id: { $in: localObjectIds } },
       { $set: { isPendingDeletion: true, deletedAt: now, updatedAt: now } }
     );
 
-    // 🔥 ИСПРАВЛЕНИЕ: Возвращаем successDeletedLocalIds для корректной работы GenericSync
     res.json({ success: true, successDeletedLocalIds: ids });
   } catch (error) {
     console.error("Signal Delete Error:", error);
@@ -157,13 +184,13 @@ export const getChanges = async (req, res) => {
     );
     const deletedSignalIds = allChanges
       .filter((item) => item.isPendingDeletion)
-      .map((doc) => doc.__localId.toString());
+      .map((doc) => doc.__localId?.toString())
+      .filter(Boolean);
 
     const simplifiedItems = createdOrUpdated.map((item) => ({
       ...item,
       _id: item._id.toString(),
-      __localId: item.__localId.toString(),
-      // 🔥 ИСПРАВЛЕНИЕ: Безопасное приведение к строке
+      __localId: item.__localId?.toString(),
       terminalBlock: item.terminalBlock ? item.terminalBlock.toString() : null,
     }));
 

@@ -2,6 +2,7 @@ import EnclosureItemModel from "../models/EnclosureItem.js";
 import PremiseModel from "../models/Premise.js"; // Нам нужна модель родителя для поиска настоящего _id
 import mongoose from "mongoose";
 import { universalCascadeDelete } from "../utils/universalCascadeDelete.js"; // Универсальное удаление
+import { deleteOldCloudinaryImage } from "../utils/cloudinaryHelper.js";
 
 const ObjectId = mongoose.Types.ObjectId;
 
@@ -81,6 +82,41 @@ export const updateBatch = async (req, res) => {
       return res.status(400).json({ message: "Нет данных для обновления." });
     }
 
+    // 🔥 ДОБАВЛЕНО: 1. Вытаскиваем старые версии шкафов из базы перед обновлением
+    const itemIds = updatedItems.map((i) => i._id).filter(Boolean);
+    const existingItems = await EnclosureItemModel.find(
+      { _id: { $in: itemIds.map(toObjectId) } },
+      "image" // Нам нужны только их картинки
+    ).lean();
+
+    // Делаем удобную мапу для быстрого поиска: { 'id_сервера': 'ссылка_на_картинку' }
+    const existingImagesMap = new Map();
+    existingItems.forEach((item) => {
+      existingImagesMap.set(item._id.toString(), item.image);
+    });
+
+    // 🔥 ДОБАВЛЕНО: 2. Сравниваем картинки и собираем задачи на удаление
+    const imagesToDeletePromises = [];
+
+    for (const incomingItem of updatedItems) {
+      if (!incomingItem._id) continue;
+
+      const oldImage = existingImagesMap.get(incomingItem._id.toString());
+      const newImage = incomingItem.image;
+
+      // Если раньше была картинка, и сейчас она изменилась (или ее удалили)
+      if (oldImage && oldImage !== newImage) {
+        imagesToDeletePromises.push(deleteOldCloudinaryImage(oldImage));
+      }
+    }
+
+    // Запускаем удаление всех старых картинок из Cloudinary параллельно, чтобы не тормозить цикл
+    if (imagesToDeletePromises.length > 0) {
+      await Promise.all(
+        imagesToDeletePromises.map((p) => p.catch(console.error))
+      );
+    }
+
     // 🔥 ИСЦЕЛЕНИЕ СВЯЗЕЙ ДЛЯ ОБНОВЛЕНИЯ
     const rawPremiseIds = updatedItems.map((i) => i.premise).filter(Boolean);
     const validPremiseOids = rawPremiseIds.map(toObjectId).filter(Boolean);
@@ -136,7 +172,6 @@ export const updateBatch = async (req, res) => {
   }
 };
 
-// --- 3. DELETE BATCH (УНИВЕРСАЛЬНЫЙ КАСКАД) ---
 export const deleteBatch = async (req, res) => {
   const { ids } = req.body; // Получаем СЕРВЕРНЫЕ ID от GenericSync
 
@@ -152,14 +187,31 @@ export const deleteBatch = async (req, res) => {
 
   try {
     // 1. Достаем локальные ID для ответа клиенту
+    // 🔥 ДОБАВЛЕНО: Запрашиваем еще и поле "image"
     const itemsToReturn = await EnclosureItemModel.find(
       { _id: { $in: validObjectIds } },
-      "__localId"
+      "__localId image"
     ).lean();
 
-    const localIdsToReturn = itemsToReturn
-      .map((i) => (i.__localId ? i.__localId.toString() : null))
-      .filter(Boolean);
+    const localIdsToReturn = [];
+    const imagesToDeletePromises = [];
+
+    // 🔥 ДОБАВЛЕНО: Собираем ID для ответа и картинки для удаления
+    itemsToReturn.forEach((item) => {
+      if (item.__localId) {
+        localIdsToReturn.push(item.__localId.toString());
+      }
+      if (item.image) {
+        imagesToDeletePromises.push(deleteOldCloudinaryImage(item.image));
+      }
+    });
+
+    // Удаляем картинки параллельно в фоне
+    if (imagesToDeletePromises.length > 0) {
+      await Promise.all(
+        imagesToDeletePromises.map((p) => p.catch(console.error))
+      );
+    }
 
     // 2. 🔥 ВЫЗЫВАЕМ УНИВЕРСАЛЬНУЮ РЕКУРСИЮ!
     // Она сама найдет Клеммники и Сигналы и проставит им isPendingDeletion
@@ -172,7 +224,6 @@ export const deleteBatch = async (req, res) => {
     res.status(500).json({ message: "Ошибка сервера при удалении шкафов." });
   }
 };
-
 // --- 4. GET CHANGES ---
 export const getChanges = async (req, res) => {
   try {
