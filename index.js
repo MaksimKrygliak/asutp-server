@@ -304,7 +304,7 @@ app.get("/users", checkAuth, UserController.getAllUsers);
 app.get("/users/changes", checkAuth, UserController.getChanges);
 app.get("/users/:id", checkAuth, UserController.getUserById);
 app.patch("/users/handleClearSync", checkAuth, UserController.handleClearSync);
-app.patch("/users/batch-update", checkAuth, checkPermission("Users_Edit"), UserController.batchUpdateUsers);
+app.patch("/users/batch-update", checkAuth, UserController.batchUpdateUsers);
 app.patch("/users/:id", checkAuth, UserController.updateUserPassword);
 app.patch(
   "/users/:id/viewed-posts",

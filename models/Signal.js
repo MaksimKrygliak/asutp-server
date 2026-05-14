@@ -14,6 +14,8 @@ const SignalSchema = new mongoose.Schema(
     maxValue: { type: Number },
     location: { type: String },
     type: { type: String, required: true },
+    cableColorLeft: { type: String, default: "" },
+    cableColorRight: { type: String, default: "" },
 
     // Ссылка на родительский TerminalBlock
     terminalBlock: {

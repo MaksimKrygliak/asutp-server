@@ -429,7 +429,6 @@ export const updateViewedPosts = async (req, res) => {
     }
   } catch (err) {
     console.error("Помилка при оновленні проглянутих постів:", err);
-    // Обробка помилок парсингу ObjectId (наприклад, якщо client send 'invalid_id')
     if (err.name === "BSONTypeError" || err.name === "CastError") {
       return res
         .status(400)
@@ -444,6 +443,7 @@ export const updateViewedPosts = async (req, res) => {
 
 export const batchUpdateUsers = async (req, res) => {
   const usersArr = req.body;
+  const currentUserId = req.userId; // ID пользователя, который делает запрос (из checkAuth)
 
   if (!Array.isArray(usersArr) || usersArr.length === 0) {
     return res.status(400).json({
@@ -453,77 +453,115 @@ export const batchUpdateUsers = async (req, res) => {
     });
   }
 
-  const updatePromises = usersArr.map(async (user) => {
-    try {
-      if (!user._id) {
-        throw new Error("Отсутствует _id для обновления пользователя");
-      }
+  try {
+    // 1. Получаем текущего пользователя, чтобы проверить его права
+    const currentUser = await UserModel.findById(currentUserId);
+    if (!currentUser) {
+      return res.status(401).json({ message: "Користувач не знайдений." });
+    }
 
-      const mongoDbUser = await UserModel.findById(user._id);
+    // Проверяем, есть ли право редактировать других
+    const canEditOthers =
+      currentUser.role === "адміністратор" ||
+      (currentUser.permissions &&
+        currentUser.permissions.includes("Users_Edit"));
 
-      if (!mongoDbUser) {
+    const updatePromises = usersArr.map(async (user) => {
+      try {
+        if (!user._id) {
+          throw new Error("Отсутствует _id для обновления пользователя");
+        }
+
+        // 2. 🛡 ГЛАВНАЯ ПРОВЕРКА БЕЗОПАСНОСТИ 🛡
+        // Если ID обновляемого пользователя НЕ совпадает с моим ID,
+        // И у меня НЕТ прав на редактирование чужих профилей -> Отклоняем!
+        if (
+          user._id.toString() !== currentUserId.toString() &&
+          !canEditOthers
+        ) {
+          return {
+            status: "rejected",
+            reason: {
+              _id: user._id,
+              message:
+                "Відмовлено в доступі: ви не можете редагувати інших користувачів.",
+            },
+          };
+        }
+
+        const mongoDbUser = await UserModel.findById(user._id);
+
+        if (!mongoDbUser) {
+          return {
+            status: "rejected",
+            reason: {
+              _id: user._id,
+              message: "Пользователь не найден на сервере.",
+            },
+          };
+        }
+
+        // Обновляем поля
+        for (const key in user) {
+          if (
+            key !== "_id" &&
+            key !== "createdAt" &&
+            key !== "updatedAt" &&
+            key !== "lastSyncTimes" &&
+            key !== "permissions" && // Обычный юзер не должен менять сам себе права доступа!
+            key !== "role" // Обычный юзер не должен менять сам себе роль!
+          ) {
+            mongoDbUser[key] = user[key];
+          }
+
+          // Позволяем изменять права и роль только если есть права (canEditOthers)
+          if ((key === "permissions" || key === "role") && canEditOthers) {
+            mongoDbUser[key] = user[key];
+          }
+        }
+
+        await mongoDbUser.save();
+        return { status: "fulfilled", value: user._id };
+      } catch (error) {
+        console.error(
+          `Ошибка при обновлении пользователя с ID ${user._id}:`,
+          error
+        );
         return {
           status: "rejected",
           reason: {
             _id: user._id,
-            message: "Пользователь не найден на сервере.",
+            message:
+              error.message ||
+              "Внутренняя ошибка сервера при обновлении пользователя.",
           },
         };
       }
+    });
 
-      // ✅ Применяем пришедшие от клиента обновления
-      for (const key in user) {
-        if (
-          key !== "_id" &&
-          key !== "createdAt" &&
-          key !== "updatedAt" &&
-          key !== "lastSyncTimes"
-        ) {
-          mongoDbUser[key] = user[key];
-        }
+    const results = await Promise.allSettled(updatePromises);
+
+    const successUpdatedUsers = [];
+    const failedUpdatedUsers = [];
+
+    results.forEach((result) => {
+      if (result.status === "fulfilled") {
+        successUpdatedUsers.push(result.value);
+      } else {
+        failedUpdatedUsers.push(result.reason);
       }
+    });
 
-      // ✅ УДАЛЯЕМ ЛОГИКУ ОБНОВЛЕНИЯ lastSyncTimes
-      // if (updatePayload.lastSyncTimes) { ... }
-
-      await mongoDbUser.save();
-      // ✅ Возвращаем только строку ID
-      return { status: "fulfilled", value: user._id };
-    } catch (error) {
-      console.error(
-        `Ошибка при обновлении пользователя с ID ${user._id}:`,
-        error
-      );
-      return {
-        status: "rejected",
-        reason: {
-          _id: user._id,
-          message:
-            error.message ||
-            "Внутренняя ошибка сервера при обновлении пользователя.",
-        },
-      };
-    }
-  });
-
-  const results = await Promise.allSettled(updatePromises);
-
-  const successUpdatedUsers = [];
-  const failedUpdatedUsers = [];
-
-  results.forEach((result) => {
-    if (result.status === "fulfilled") {
-      successUpdatedUsers.push(result.value);
-    } else {
-      failedUpdatedUsers.push(result.reason);
-    }
-  });
-
-  res.status(200).json({
-    message: "Пакетное обновление пользователей завершено.",
-    successUpdatedUsers: successUpdatedUsers,
-    failedUpdatedUsers: failedUpdatedUsers,
-  });
+    res.status(200).json({
+      message: "Пакетное обновление пользователей завершено.",
+      successUpdatedUsers: successUpdatedUsers,
+      failedUpdatedUsers: failedUpdatedUsers,
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Критична помилка сервера", error: error.message });
+  }
 };
 
 export const getChanges = async (req, res) => {

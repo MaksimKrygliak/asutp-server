@@ -31,6 +31,21 @@ const PostSchema = new mongoose.Schema(
       ref: "EnclosureItem",
       default: null,
     },
+    computer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Computer",
+      default: null,
+    },
+    server: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Server",
+      default: null,
+    },
+    ups: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "UPS",
+      default: null,
+    },
     tags: {
       type: [String],
       default: [],
