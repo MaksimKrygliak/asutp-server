@@ -473,18 +473,13 @@ export const batchUpdateUsers = async (req, res) => {
         }
 
         // 2. 🛡 ГЛАВНАЯ ПРОВЕРКА БЕЗОПАСНОСТИ 🛡
-        // Если ID обновляемого пользователя НЕ совпадает с моим ID,
-        // И у меня НЕТ прав на редактирование чужих профилей -> Отклоняем!
-        if (
-          user._id.toString() !== currentUserId.toString() &&
-          !canEditOthers
-        ) {
+        if (user._id.toString() !== currentUserId.toString() && !canEditOthers) {
+          // Возвращаем объект ошибки
           return {
             status: "rejected",
             reason: {
               _id: user._id,
-              message:
-                "Відмовлено в доступі: ви не можете редагувати інших користувачів.",
+              message: "Відмовлено в доступі: ви не можете редагувати інших користувачів.",
             },
           };
         }
@@ -508,47 +503,44 @@ export const batchUpdateUsers = async (req, res) => {
             key !== "createdAt" &&
             key !== "updatedAt" &&
             key !== "lastSyncTimes" &&
-            key !== "permissions" && // Обычный юзер не должен менять сам себе права доступа!
-            key !== "role" // Обычный юзер не должен менять сам себе роль!
+            key !== "permissions" &&
+            key !== "role"
           ) {
             mongoDbUser[key] = user[key];
           }
 
-          // Позволяем изменять права и роль только если есть права (canEditOthers)
           if ((key === "permissions" || key === "role") && canEditOthers) {
             mongoDbUser[key] = user[key];
           }
         }
 
         await mongoDbUser.save();
+        // Возвращаем успешный результат
         return { status: "fulfilled", value: user._id };
+        
       } catch (error) {
-        console.error(
-          `Ошибка при обновлении пользователя с ID ${user._id}:`,
-          error
-        );
         return {
           status: "rejected",
           reason: {
             _id: user._id,
-            message:
-              error.message ||
-              "Внутренняя ошибка сервера при обновлении пользователя.",
+            message: error.message || "Внутренняя ошибка сервера при обновлении пользователя.",
           },
         };
       }
     });
 
-    const results = await Promise.allSettled(updatePromises);
+    // ИСПРАВЛЕНИЕ: Используем обычный Promise.all, так как ошибки мы отловили внутри
+    const results = await Promise.all(updatePromises);
 
     const successUpdatedUsers = [];
     const failedUpdatedUsers = [];
 
+    // ИСПРАВЛЕНИЕ: Правильно сортируем результаты
     results.forEach((result) => {
       if (result.status === "fulfilled") {
-        successUpdatedUsers.push(result.value);
+        successUpdatedUsers.push(result.value); // Пушим ТОЛЬКО саму строку с ID
       } else {
-        failedUpdatedUsers.push(result.reason);
+        failedUpdatedUsers.push(result.reason); // Пушим объект с причиной ошибки
       }
     });
 
@@ -557,10 +549,9 @@ export const batchUpdateUsers = async (req, res) => {
       successUpdatedUsers: successUpdatedUsers,
       failedUpdatedUsers: failedUpdatedUsers,
     });
+    
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Критична помилка сервера", error: error.message });
+    res.status(500).json({ message: "Критична помилка сервера", error: error.message });
   }
 };
 
